@@ -1,0 +1,108 @@
+{
+	"editor.insertSpaces": false,
+	"editor.tabSize": 4,
+	"editor.minimap.enabled": true,
+	"editor.minimap.renderCharacters": true,
+	"terminal.integrated.fontWeight": "1",
+	"editor.fontSize": 12,
+	"editor.fontWeight": "1",
+	"workbench.editor.showTabs": "multiple",
+	"workbench.colorCustomizations": {
+		"editorCursor.foreground": "#00ff33a3",
+		"editor.lineHighlightBackground": "#080828"
+	},
+	"workbench.statusBar.visible": true,
+	"editor.lineNumbers": "on",
+	"editor.cursorStyle": "block",
+	"window.zoomLevel": 0,
+	"editor.tabCompletion": "on",
+	"todohighlight.isEnable": true,
+	"todohighlight.keywords": [
+		{
+			"text": "TODO:",
+			"color": "red",
+			"backgroundColor": "rgba(0.1,0.1,0.1,0.5)",
+			"overviewRulerColor": "rgba(0,0,0,0)"
+		},
+		{
+			"text": "TODO(Rafis):",
+			"color": "#ff2212",
+			"backgroundColor": "rgba(0.1,0.1,0.1,0.5)",
+			"overviewRulerColor": "rgba(0,0,0,0)"
+		},
+		{
+			"text": "HACK:",
+			"color": "#ff6600",
+			"backgroundColor": "rgba(0.1,0.1,0.1,0.5)",
+			"overviewRulerColor": "rgba(0,0,0,0)"
+		},
+		{
+			"text": "NOTE:",
+			"color": "green",
+			"backgroundColor": "rgba(0.1,0.1,0.1,0.5)",
+			"overviewRulerColor": "rgba(0,0,0,0)"
+		},
+		{
+			"text": "RE_LOG_TRACE",
+			"color": "#696969",
+			"backgroundColor": "rgba(0.1,0.1,0.1,0.0)",
+			"overviewRulerColor": "rgba(0,0,0,0)"
+		},
+		{
+			"text": "RE_LOG_DEBUG",
+			"color": "#5F9EA0",
+			"backgroundColor": "rgba(0.1,0.1,0.1,0.0)",
+			"overviewRulerColor": "rgba(0,0,0,0)"
+		},
+		{
+			"text": "RE_LOG_INFO",
+			"color": "#7CFC00",
+			"backgroundColor": "rgba(0.1,0.1,0.1,0.0)",
+			"overviewRulerColor": "rgba(0,0,0,0)"
+		},
+		{
+			"text": "RE_LOG_WARN",
+			"color": "#FFFF00",
+			"backgroundColor": "rgba(0.1,0.1,0.1,0.0)",
+			"overviewRulerColor": "rgba(0,0,0,0)"
+		},
+		{
+			"text": "RE_LOG_ERROR",
+			"color": "#CD5C5C",
+			"backgroundColor": "rgba(0.1,0.1,0.1,0.0)",
+			"overviewRulerColor": "rgba(0,0,0,0)"
+		},
+		{
+			"text": "RE_LOG_FATAL",
+			"color": "#FF0000",
+			"backgroundColor": "rgba(0.1,0.1,0.1,0.5)",
+			"overviewRulerColor": "rgba(0,0,0,0)"
+		}
+	],
+	"todohighlight.defaultStyle": {
+		"color": "red",
+		"backgroundColor": "#ffab00",
+		"overviewRulerColor": "rgba(0,0,0,0)",
+		"isWholeLine": false,
+	},
+	// File copyright documentation tag.  Array of strings will be converted to one line per element.  Can template {year}.
+	"doxdocgen.file.copyrightTag": [
+		"@copyright Rafis Rakhmankulov 2025-{year}"
+	],
+	"doxdocgen.file.versionTag": "@version 1.0",
+	"doxdocgen.generic.authorEmail": "rakhmankulov.r@gmail.com",
+	"doxdocgen.generic.authorName": "Rafis Rakhmankulov",
+	"doxdocgen.generic.authorTag": "@author {author} ({email})",
+	// The order to use for the file comment. Values can be used multiple times. Valid values are shown in default setting.
+	"doxdocgen.file.fileOrder": [
+		"file",
+		"author",
+		"brief",
+		"version",
+		"date",
+		"empty",
+		"copyright",
+		"empty",
+		"custom"
+	]
+}

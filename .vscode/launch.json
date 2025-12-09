@@ -1,0 +1,29 @@
+{
+	"version": "0.2.0",
+	"configurations": [
+		{
+			"name": "Launch Engine",
+			"type": "lldb",
+			"request": "launch",
+			"cwd": "${workspaceFolder}",
+			"program": "Binaries/Mac/Debug/Testbed",
+			"osx": {
+				"env": {
+					// Enables Metal Performance HUD
+					"MTL_HUD_ENABLED": "1",
+					// Enables Metal Validation layer
+					"METAL_DEVICE_WRAPPER_TYPE": "1",
+					// Spits a lot about AutoreleasePools
+					// "OBJC_DEBUG_MISSING_POOLS": "YES",
+					// "OBJC_DEBUG_POOL_ALLOCATION": "YES",
+					// "NSZombieEnabled": "YES",
+				}
+			},
+			"windows": {
+				"program": "Binareis/Windows/Debug/Testbed.exe",
+			},
+			"preLaunchTask": "Build",
+			"console": "internalConsole",
+		}
+	]
+}

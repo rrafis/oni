@@ -1,0 +1,52 @@
+{
+	"tasks": [
+		{
+			"type": "shell",
+			"label": "Build",
+			"command": "make",
+			"args": [
+				"-j12",
+				"config=debug_mac"
+			],
+			"windows": {
+				"command": "make",
+				"args": [
+					"-j12",
+					"config=debug_windows"
+				],
+			},
+			"options": {
+				"cwd": "${workspaceFolder}"
+			},
+			"problemMatcher": "$gcc",
+			"group": "build",
+			"detail": "Build game",
+			"presentation": {
+				"echo": true,
+				"reveal": "silent",
+				"focus": false,
+				"panel": "dedicated"
+			},
+		},
+		{
+			"type": "shell",
+			"label": "Generate",
+			"command": "ThirdParty/premake/Mac/premake5",
+			"args": [
+				"gmake"
+			],
+			"windows": {
+				"command": "ThirdParty/premake/Windows/premake5.exe",
+				"args": [
+					"gmake"
+				],
+			},
+			"options": {
+				"cwd": "${workspaceFolder}"
+			},
+			"group": "build",
+			"detail": "Generate solution",
+		},
+	],
+	"version": "2.0.0"
+}

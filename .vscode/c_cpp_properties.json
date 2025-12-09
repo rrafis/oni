@@ -1,0 +1,73 @@
+{
+	"configurations": [
+		{
+			"name": "Windows (Debug)",
+			"includePath": [
+				"${workspaceFolder}/ThirdParty/entt/src",
+				"${workspaceFolder}/ThirdParty/glm"
+			],
+			"defines": [
+				"RE_PLATFORM=Windows",
+				"RE_DEBUG",
+				"RE_ENABLE_ASSERT"
+			],
+			// "compilerPath": "",
+			"cppStandard": "c++20",
+			"intelliSenseMode": "msvc-x64"
+		},
+		{
+			"name": "Windows (Shipping)",
+			"includePath": [
+				"${workspaceFolder}/ThirdParty/entt/src",
+				"${workspaceFolder}/ThirdParty/glm"
+			],
+			"defines": [
+				"RE_PLATFORM=Windows",
+				"RE_SHIPPING"
+			],
+			// "compilerPath": "",
+			"cppStandard": "c++20",
+			"intelliSenseMode": "msvc-x64"
+		},
+		{
+			"name": "Mac (Debug)",
+			"includePath": [
+				"${workspaceFolder}/ThirdParty/entt/src",
+				"${workspaceFolder}/ThirdParty/glm",
+				"${workspaceFolder}/ThirdParty/metal-cpp"
+			],
+			"defines": [
+				"RE_PLATFORM=Mac",
+				"RE_DEBUG",
+				"RE_ENABLE_ASSERT"
+			],
+			"macFrameworkPath": [
+				"/System/Library/Frameworks",
+				"/Library/Frameworks"
+			],
+			"compilerPath": "/usr/bin/clang",
+			"cppStandard": "c++20",
+			"intelliSenseMode": "macos-clang-arm64"
+		},
+		{
+			"name": "Mac (Shipping)",
+			"includePath": [
+				"${workspaceFolder}/ThirdParty/entt/src",
+				"${workspaceFolder}/ThirdParty/glm",
+				"${workspaceFolder}/ThirdParty/metal-cpp"
+			],
+			"defines": [
+				"RE_PLATFORM=Mac",
+				"RE_SHIPPING"
+			],
+			"macFrameworkPath": [
+				"/System/Library/Frameworks",
+				"/Library/Frameworks"
+			],
+			"compilerPath": "/usr/bin/clang",
+			"cppStandard": "c++20",
+			"intelliSenseMode": "macos-clang-arm64"
+		}
+	],
+	"version": 4
+}
