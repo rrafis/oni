@@ -76,5 +76,14 @@ project "Testbed"
 		externalincludedirs {
 			"ThirdParty/metal-cpp",
 		}
+
+		links {
+			"AppKit.framework",
+			"Foundation.framework",
+			"Metal.framework",
+			"MetalFX.framework",
+			"MetalKit.framework",
+			"QuartzCore.framework",
+		}
 	filter {}
 
