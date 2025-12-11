@@ -77,6 +77,18 @@ struct FMacSurfaceDesc
 	const char* IconPath = "";
 };
 
+struct FInputButtonState
+{
+	bool bPressed;
+	f32 Value; // [0, 1]
+};
+
+struct FInputAxisState
+{
+	f32 X; // [-1, 1], 0 means inside deadzone
+	f32 Y; // [-1, 1], 0 means inside deadzone
+};
+
 struct FMacInternalState
 {
 	u8* Backbuffer;
@@ -85,21 +97,60 @@ struct FMacInternalState
 	u8 BytesPerPixel;
 
 	f32 DeltaTime;
+
+	FInputButtonState GamepadA;
+	FInputButtonState GamepadB;
+	FInputButtonState GamepadX;
+	FInputButtonState GamepadY;
+
+	FInputButtonState GamepadDpadUp;
+	FInputButtonState GamepadDpadDown;
+	FInputButtonState GamepadDpadLeft;
+	FInputButtonState GamepadDpadRight;
+	
+	FInputButtonState GamepadShoulderLeft;
+	FInputButtonState GamepadShoulderRight;
+	FInputButtonState GamepadThumbstickButtonLeft;
+	FInputButtonState GamepadThumbstickButtonRight;
+	
+	FInputButtonState GamepadStart;
+	FInputButtonState GamepadOption;
+
+	FInputButtonState GamepadTriggerLeft;
+	FInputButtonState GamepadTriggerRight;
+	
+	FInputAxisState GamepadDpadAxis;
+	FInputAxisState GamepadThumbstickLeft;
+	FInputAxisState GamepadThumbstickRight;
 };
 
 auto MacRunLoop(const FMacInternalState& InternalState) -> void
 {
-	for (u32 y = 0; y < InternalState.Height; ++y)
+	static f32 xOffset = 0;
+	static f32 yOffset = 0;
+	static f32 OffsetSpeed = 300.0f;
+
+	u32 Width = InternalState.Width;
+	u32 Height = InternalState.Height;
+	u32 Pitch = Width * InternalState.BytesPerPixel;
+	u8* Row = InternalState.Backbuffer;
+
+	xOffset += InternalState.GamepadThumbstickLeft.X * OffsetSpeed * InternalState.DeltaTime;
+	yOffset += InternalState.GamepadThumbstickLeft.Y * OffsetSpeed * InternalState.DeltaTime;
+
+	for (u32 Y = 0; Y < Height; ++Y)
 	{
-		for (u32 x = 0; x < InternalState.Width; ++x)
+		u32* Pixel = (u32*)Row;
+
+		for (u32 X = 0; X < Width; ++X)
 		{
-			bool checker = ((x / 32) ^ (y / 32)) & 1;
-			u8* p = InternalState.Backbuffer + (y * InternalState.Width * InternalState.BytesPerPixel) + x * InternalState.BytesPerPixel;
-			p[0] = checker ? 0xFF - 0x15 : 0x15; // B
-			p[1] = checker ? 0xFF - 0x15 : 0x15; // G
-			p[2] = checker ? 0xFF - 0x15 : 0x15; // R
-			p[3] = 0xFF;						 // A
+			u8 C1 = X + xOffset;
+			u8 C2 = Y + yOffset;
+
+			*Pixel++ = ((C2 << 16) | C1);
 		}
+
+		Row += Pitch;
 	}
 }
 

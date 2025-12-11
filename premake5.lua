@@ -84,6 +84,7 @@ project "Testbed"
 			"MetalFX.framework",
 			"MetalKit.framework",
 			"QuartzCore.framework",
+			"GameController.framework",
 		}
 	filter {}
 
