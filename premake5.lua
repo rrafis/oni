@@ -39,6 +39,7 @@ workspace "RE"
 		defines {
 			"RE_DEBUG",
 			"RE_ENABLE_ASSERT",
+			"RE_INTERNAL"
 		}
 	filter {}
 

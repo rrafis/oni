@@ -9,7 +9,8 @@
 			"defines": [
 				"RE_PLATFORM=Windows",
 				"RE_DEBUG",
-				"RE_ENABLE_ASSERT"
+				"RE_ENABLE_ASSERT",
+				"RE_INTERNAL"
 			],
 			// "compilerPath": "",
 			"cppStandard": "c++20",
@@ -39,7 +40,8 @@
 			"defines": [
 				"RE_PLATFORM=Mac",
 				"RE_DEBUG",
-				"RE_ENABLE_ASSERT"
+				"RE_ENABLE_ASSERT",
+				"RE_INTERNAL"
 			],
 			"macFrameworkPath": [
 				"/System/Library/Frameworks",

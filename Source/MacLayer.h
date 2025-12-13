@@ -2,6 +2,8 @@
 
 #include <sys/types.h>
 
+#include <glm/glm.hpp>
+
 // Unsigned int types.
 
 /** @brief Unsigned 8-bit integer */
@@ -47,7 +49,22 @@ static_assert(sizeof(i64) == 8);
 static_assert(sizeof(f32) == 4);
 static_assert(sizeof(f64) == 8);
 
-struct FMacSurfaceDesc
+constexpr auto KiB(u64 Amount) -> u64
+{
+	return Amount * 1024;
+}
+
+constexpr auto MiB(u64 Amount) -> u64
+{
+	return KiB(Amount) * 1024;
+}
+
+constexpr auto GiB(u64 Amount) -> u64
+{
+	return MiB(Amount) * 1024;
+}
+
+struct FGameSurfaceDesc
 {
 	u32 XPos = 0, YPos = 0;
 	u32 Width = 1280, Height = 720;
@@ -89,15 +106,8 @@ struct FInputAxisState
 	f32 Y; // [-1, 1], 0 means inside deadzone
 };
 
-struct FMacInternalState
+struct FInputGamepad
 {
-	u8* Backbuffer;
-	u32 Width;
-	u32 Height;
-	u8 BytesPerPixel;
-
-	f32 DeltaTime;
-
 	FInputButtonState GamepadA;
 	FInputButtonState GamepadB;
 	FInputButtonState GamepadX;
@@ -107,36 +117,79 @@ struct FMacInternalState
 	FInputButtonState GamepadDpadDown;
 	FInputButtonState GamepadDpadLeft;
 	FInputButtonState GamepadDpadRight;
-	
+
 	FInputButtonState GamepadShoulderLeft;
 	FInputButtonState GamepadShoulderRight;
 	FInputButtonState GamepadThumbstickButtonLeft;
 	FInputButtonState GamepadThumbstickButtonRight;
-	
+
 	FInputButtonState GamepadStart;
 	FInputButtonState GamepadOption;
 
 	FInputButtonState GamepadTriggerLeft;
 	FInputButtonState GamepadTriggerRight;
-	
+
 	FInputAxisState GamepadDpadAxis;
 	FInputAxisState GamepadThumbstickLeft;
 	FInputAxisState GamepadThumbstickRight;
 };
 
-auto MacRunLoop(const FMacInternalState& InternalState) -> void
+struct FOffscreenBuffer
 {
-	static f32 xOffset = 0;
-	static f32 yOffset = 0;
-	static f32 OffsetSpeed = 300.0f;
+	u8* Backbuffer;
+	u32 Width;
+	u32 Height;
+	u8 BytesPerPixel;
+};
 
-	u32 Width = InternalState.Width;
-	u32 Height = InternalState.Height;
-	u32 Pitch = Width * InternalState.BytesPerPixel;
-	u8* Row = InternalState.Backbuffer;
+struct FGameMemory
+{
+	u64 PermanentStorageSize;
+	void* PermanentStorage;
 
-	xOffset += InternalState.GamepadThumbstickLeft.X * OffsetSpeed * InternalState.DeltaTime;
-	yOffset += InternalState.GamepadThumbstickLeft.Y * OffsetSpeed * InternalState.DeltaTime;
+	u64 TempStorageSize;
+	void* TempStorage;
+};
+
+auto GameGetSurfaceDesc() -> FGameSurfaceDesc
+{
+	FSurfaceDesc Props;
+	Props.Width = 1280;
+	Props.Height = 5 * Props.Width / 8;
+	Props.bCenterd = true;
+	Props.Title = "Testbed Window";
+
+	return Props;
+}
+
+struct FGameState
+{
+	f32 xOffset;
+	f32 yOffset;
+	f32 OffsetSpeed;
+};
+
+auto GameInitialize(FGameMemory& Memory) -> void
+{
+	// TODO(Rafis): Assert Memory is valid
+
+	FGameState& State = *(FGameState*)Memory.PermanentStorage;
+	State.xOffset = 0;
+	State.yOffset = 0;
+	State.OffsetSpeed = 2 * 255.f;
+}
+
+auto GameUpdateAndRender(FGameMemory& Memory, f32 DeltaTime, FOffscreenBuffer& Buffer, const FInputGamepad& Gamepad) -> void
+{
+	FGameState& State = *(FGameState*)Memory.PermanentStorage;
+
+	u32 Width = Buffer.Width;
+	u32 Height = Buffer.Height;
+	u32 Pitch = Width * Buffer.BytesPerPixel;
+	u8* Row = Buffer.Backbuffer;
+
+	State.xOffset += Gamepad.GamepadThumbstickLeft.X * State.OffsetSpeed * DeltaTime;
+	State.yOffset += Gamepad.GamepadThumbstickLeft.Y * State.OffsetSpeed * DeltaTime;
 
 	for (u32 Y = 0; Y < Height; ++Y)
 	{
@@ -144,23 +197,12 @@ auto MacRunLoop(const FMacInternalState& InternalState) -> void
 
 		for (u32 X = 0; X < Width; ++X)
 		{
-			u8 C1 = X + xOffset;
-			u8 C2 = Y + yOffset;
+			u8 C1 = glm::abs(X + State.xOffset);
+			u8 C2 = glm::abs(Y + State.yOffset);
 
 			*Pixel++ = ((C2 << 16) | C1);
 		}
 
 		Row += Pitch;
 	}
-}
-
-auto MacGetSurfaceDesc() -> FMacSurfaceDesc
-{
-	FMacSurfaceDesc Props;
-	Props.Width = 1280;
-	Props.Height = 5 * Props.Width / 8;
-	Props.bCenterd = true;
-	Props.Title = "Testbed Window";
-
-	return Props;
 }

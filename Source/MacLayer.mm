@@ -8,6 +8,10 @@
 
 #import <simd/simd.h>
 
+#include <mach/mach_init.h>
+#include <mach/mach_vm.h>
+// #include <mach/task.h>
+
 @interface GameApplication : NSObject <NSApplicationDelegate, NSWindowDelegate, CAMetalDisplayLinkDelegate>
 
 - (void)setBrightness:(id)sender;
@@ -40,21 +44,22 @@
 	id<MTLSamplerState>					_backBufferSampler;
 	MTLRenderPassDescriptor* 			_drawableRenderPass;
 
-	u8*									_pixels;
-
 	CFTimeInterval						_lastTargetTimestamp;
-	CFTimeInterval						_lastDeltaTime;
+	f32									_lastDeltaTime;
+	u32									_targetFPS;
 
-	FMacInternalState					_internalState;
-
-	GCController*						_gamepad;
+	GCController*						_nativeGamepad;
 	GCMouse*							_mouse;
 	GCKeyboard*							_keyboard;
+
+	FOffscreenBuffer					_offscreenBuffer;
+	FInputGamepad						_gamepad;
+	FGameMemory							_gameMemory;
 }
 
 - (void)createWindow
 {
-	auto Properties = MacGetSurfaceDesc();
+	auto Properties = GameGetSurfaceDesc();
 
 	NSWindowStyleMask mask = NSWindowStyleMaskTitled;
 	if (Properties.bClosable)
@@ -145,6 +150,35 @@
 	_window.contentView = _view;
 }
 
+// Initialize Memory for the Game and Game itself
+- (void)createGame
+{
+	mach_vm_address_t addr = 0;
+	int flags = VM_FLAGS_ANYWHERE;
+	// During development it is usefull to always have game memory in the same address
+#if defined(RE_INTERNAL)
+	addr = 0x0000600000000000ULL;
+	flags = VM_FLAGS_FIXED;
+#endif
+
+	_gameMemory.PermanentStorageSize = MiB(64);
+	_gameMemory.TempStorageSize = GiB(2);
+	kern_return_t kr = mach_vm_allocate(mach_task_self(), &addr, _gameMemory.PermanentStorageSize + _gameMemory.TempStorageSize, flags);
+	if (kr != KERN_SUCCESS)
+	{
+		printf("FAILED TO ALLOCATE GAME MEMORY");
+	}
+	_gameMemory.PermanentStorage = (void*)addr;
+	_gameMemory.TempStorage = (void*)(addr + _gameMemory.PermanentStorageSize);
+
+	GameInitialize(_gameMemory);
+
+	// NOTE: Before game starts calculate delta time for the very first frame,
+	// it is not necessary but i did it.
+	_targetFPS = 120.f;
+	_lastDeltaTime = 1000.0f / _targetFPS;
+}
+
 - (void)createMetalResources
 {
 	_drawableRenderPass = [[MTLRenderPassDescriptor alloc] init];
@@ -206,32 +240,32 @@
 	{
 		[_backBuffer release];
 	}
-	if (_pixels)
+	if (_offscreenBuffer.Backbuffer)
 	{
-		free(_pixels);
+		free(_offscreenBuffer.Backbuffer);
 	}
 
-	u32 width = _metalLayer.drawableSize.width;
-	u32 height = _metalLayer.drawableSize.height;
+	_offscreenBuffer.Width = _metalLayer.drawableSize.width;
+	_offscreenBuffer.Height = _metalLayer.drawableSize.height;
+	_offscreenBuffer.BytesPerPixel = 4;
+	_offscreenBuffer.Backbuffer = (u8*)malloc(_offscreenBuffer.Width * _offscreenBuffer.Height * _offscreenBuffer.BytesPerPixel);
 
 	MTLTextureDescriptor* desc = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm
-														width:width
-														height:height
+														width:_offscreenBuffer.Width
+														height:_offscreenBuffer.Height
 														mipmapped:NO];
 
 	desc.storageMode = MTLStorageModeShared;   // CPU/GPU visible
 	desc.usage = MTLTextureUsageShaderRead;
 	_backBuffer = [_pDevice newTextureWithDescriptor:desc];
-
-	NSUInteger bytesPerPixel = 4; // BGRA8 = 4 bytes per pixel
-	_pixels = (u8*)malloc(width * height * bytesPerPixel * 5);
 }
 
 - (void)createMetalDisplayLink
 {
 	_metalDisplayLink = [[CAMetalDisplayLink alloc] initWithMetalLayer:_metalLayer];
 	_metalDisplayLink.delegate = self;
-	_metalDisplayLink.preferredFrameRateRange = CAFrameRateRangeMake(30, 120, 120);
+	//                                                               Min,   Max,       Preffered
+	_metalDisplayLink.preferredFrameRateRange = CAFrameRateRangeMake(60.0f, _targetFPS, _targetFPS);
 }
 
 - (void)addInputObservers
@@ -280,12 +314,7 @@
 {
 	[self pollInput];
 
-	_internalState.Backbuffer = _pixels;
-	_internalState.Width = _backBuffer.width;
-	_internalState.Height = _backBuffer.height;
-	_internalState.BytesPerPixel = 4;
-	_internalState.DeltaTime = (f32)_lastDeltaTime;
-	MacRunLoop(_internalState);
+	GameUpdateAndRender(_gameMemory, _lastDeltaTime, _offscreenBuffer, _gamepad);
 
 	@autoreleasepool
 	{
@@ -293,9 +322,9 @@
 
 		// Fill texture
 		{
-			NSUInteger bytesPerRow = _internalState.Width * _internalState.BytesPerPixel;
-			MTLRegion region = MTLRegionMake2D(0, 0, _internalState.Width, _internalState.Height);
-			[_backBuffer replaceRegion:region mipmapLevel:0 withBytes:_pixels bytesPerRow:bytesPerRow];
+			NSUInteger bytesPerRow = _offscreenBuffer.Width * _offscreenBuffer.BytesPerPixel;
+			MTLRegion region = MTLRegionMake2D(0, 0, _offscreenBuffer.Width, _offscreenBuffer.Height);
+			[_backBuffer replaceRegion:region mipmapLevel:0 withBytes:_offscreenBuffer.Backbuffer bytesPerRow:bytesPerRow];
 		}
 		// Present backbuffer render pass
 		{
@@ -315,7 +344,7 @@
 	}
 
 	CFTimeInterval currentTimestamp = CACurrentMediaTime();
-	_lastDeltaTime = currentTimestamp - _lastTargetTimestamp;
+	_lastDeltaTime = (f32)(currentTimestamp - _lastTargetTimestamp);
 	_lastTargetTimestamp = currentTimestamp;
 }
 #pragma endregion CAMetalDisplayLinkDelegate
@@ -330,7 +359,8 @@
 {
 	[self createWindow];
 	[self createView];
-	// [self createGame];
+	[self createGame];
+	[self addInputObservers];
 	[self createMetalResources];
 	[self showWindow];
 	[self evaluateCommandLine];
@@ -349,15 +379,8 @@
 	[NSApp activateIgnoringOtherApps:YES];
 
 	[self createMetalDisplayLink];
-
 	// Add display link to the run loop to have an entry point for the application
 	[_metalDisplayLink addToRunLoop:[NSRunLoop currentRunLoop] forMode:NSRunLoopCommonModes];
-
-	// NOTE: Before application starts calculate delta time for the very first frame,
-	// it is not necessary but i did it.
-	_lastDeltaTime = 1000.0 / 120.0;
-
-	[self addInputObservers];
 }
 
 - (void)applicationWillTerminate:(NSNotification*)notification
@@ -440,9 +463,9 @@
 
 - (void)pollInput
 {
-	if (_gamepad)
+	if (_nativeGamepad)
 	{
-		GCExtendedGamepad* controllerInput = _gamepad.extendedGamepad;
+		GCExtendedGamepad* controllerInput = _nativeGamepad.extendedGamepad;
 		if (controllerInput == nil)
 		{
 			return;
@@ -450,25 +473,25 @@
 
 		if (controllerInput)
 		{
-			[self macInputUpdateButtonState:_internalState.GamepadA Input:controllerInput.buttonA];
-			[self macInputUpdateButtonState:_internalState.GamepadB Input:controllerInput.buttonB];
-			[self macInputUpdateButtonState:_internalState.GamepadX Input:controllerInput.buttonX];
-			[self macInputUpdateButtonState:_internalState.GamepadY Input:controllerInput.buttonY];
-			[self macInputUpdateButtonState:_internalState.GamepadDpadUp Input:controllerInput.buttonMenu];
-			[self macInputUpdateButtonState:_internalState.GamepadDpadDown Input:controllerInput.buttonOptions];
-			[self macInputUpdateButtonState:_internalState.GamepadDpadLeft Input:controllerInput.buttonMenu];
-			[self macInputUpdateButtonState:_internalState.GamepadDpadRight Input:controllerInput.buttonOptions];
-			[self macInputUpdateButtonState:_internalState.GamepadShoulderLeft Input:controllerInput.leftShoulder];
-			[self macInputUpdateButtonState:_internalState.GamepadShoulderRight Input:controllerInput.rightShoulder];
-			[self macInputUpdateButtonState:_internalState.GamepadThumbstickButtonLeft Input:controllerInput.leftThumbstickButton];
-			[self macInputUpdateButtonState:_internalState.GamepadThumbstickButtonRight Input:controllerInput.rightThumbstickButton];
-			[self macInputUpdateButtonState:_internalState.GamepadStart Input:controllerInput.buttonMenu];
-			[self macInputUpdateButtonState:_internalState.GamepadOption Input:controllerInput.buttonOptions];
-			[self macInputUpdateButtonState:_internalState.GamepadTriggerLeft Input:controllerInput.leftTrigger];
-			[self macInputUpdateButtonState:_internalState.GamepadTriggerRight Input:controllerInput.rightTrigger];
-			[self macInputUpdateAxisState:_internalState.GamepadDpadAxis Input:controllerInput.dpad];
-			[self macInputUpdateAxisState:_internalState.GamepadThumbstickLeft Input:controllerInput.leftThumbstick];
-			[self macInputUpdateAxisState:_internalState.GamepadThumbstickRight Input:controllerInput.rightThumbstick];
+			[self macInputUpdateButtonState:_gamepad.GamepadA Input:controllerInput.buttonA];
+			[self macInputUpdateButtonState:_gamepad.GamepadB Input:controllerInput.buttonB];
+			[self macInputUpdateButtonState:_gamepad.GamepadX Input:controllerInput.buttonX];
+			[self macInputUpdateButtonState:_gamepad.GamepadY Input:controllerInput.buttonY];
+			[self macInputUpdateButtonState:_gamepad.GamepadDpadUp Input:controllerInput.buttonMenu];
+			[self macInputUpdateButtonState:_gamepad.GamepadDpadDown Input:controllerInput.buttonOptions];
+			[self macInputUpdateButtonState:_gamepad.GamepadDpadLeft Input:controllerInput.buttonMenu];
+			[self macInputUpdateButtonState:_gamepad.GamepadDpadRight Input:controllerInput.buttonOptions];
+			[self macInputUpdateButtonState:_gamepad.GamepadShoulderLeft Input:controllerInput.leftShoulder];
+			[self macInputUpdateButtonState:_gamepad.GamepadShoulderRight Input:controllerInput.rightShoulder];
+			[self macInputUpdateButtonState:_gamepad.GamepadThumbstickButtonLeft Input:controllerInput.leftThumbstickButton];
+			[self macInputUpdateButtonState:_gamepad.GamepadThumbstickButtonRight Input:controllerInput.rightThumbstickButton];
+			[self macInputUpdateButtonState:_gamepad.GamepadStart Input:controllerInput.buttonMenu];
+			[self macInputUpdateButtonState:_gamepad.GamepadOption Input:controllerInput.buttonOptions];
+			[self macInputUpdateButtonState:_gamepad.GamepadTriggerLeft Input:controllerInput.leftTrigger];
+			[self macInputUpdateButtonState:_gamepad.GamepadTriggerRight Input:controllerInput.rightTrigger];
+			[self macInputUpdateAxisState:_gamepad.GamepadDpadAxis Input:controllerInput.dpad];
+			[self macInputUpdateAxisState:_gamepad.GamepadThumbstickLeft Input:controllerInput.leftThumbstick];
+			[self macInputUpdateAxisState:_gamepad.GamepadThumbstickRight Input:controllerInput.rightThumbstick];
 		}
 	}
 
@@ -588,13 +611,13 @@
 		return;
 	}
 
-	if (_gamepad != nil && _gamepad != controller)
+	if (_nativeGamepad != nil && _nativeGamepad != controller)
 	{
 		// TODO(Rafis): Add support for multiple controller
 		return;
 	}
 
-	_gamepad = controller;
+	_nativeGamepad = controller;
 }
 
 /// Tells the game input class when a game controller disconnects.
@@ -606,13 +629,13 @@
 		return;
 	}
 
-	if (_gamepad != nil && _gamepad != controller)
+	if (_nativeGamepad != nil && _nativeGamepad != controller)
 	{
 		// TODO(Rafis): Add support for multiple controller
 		return;
 	}
 
-	_gamepad = nil;
+	_nativeGamepad = nil;
 }
 
 #pragma region Input Observers
