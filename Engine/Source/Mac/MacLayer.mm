@@ -1,4 +1,4 @@
-#include "MacLayer.h"
+#include "Platform.h"
 
 #import <Cocoa/Cocoa.h>
 #import <Metal/Metal.h>
@@ -11,6 +11,86 @@
 #include <mach/mach_init.h>
 #include <mach/mach_vm.h>
 // #include <mach/task.h>
+
+#include <dlfcn.h>
+
+using FGameSurfaceDescFunc = FGameSurfaceDesc* (*)();
+using FGameInitializeFunc = void (*)(FGameMemory&);
+using FGameUpdateAndRenderFunc = void (*)(FGameMemory&, f32, FOffscreenBuffer&, const FInputGamepad&);
+
+struct FGameModule
+{
+	void* LibraryHandle;
+	FGameSurfaceDescFunc GameGetSurfaceDesc;
+	FGameInitializeFunc GameInitialize;
+	FGameUpdateAndRenderFunc GameUpdateAndRender;
+
+	bool bIsValid;
+
+	NSString* BasePath;
+	NSString* HotLoadPath;
+	NSDate* BaseLastWriteTime;
+};
+
+auto GameModuleLoad() -> FGameModule
+{
+	NSString* exeDir = [[[NSBundle mainBundle] executableURL]URLByDeletingLastPathComponent].path;
+	NSString* src = [exeDir stringByAppendingPathComponent:[NSString stringWithFormat:@"libTestbed.dylib"]];
+	static u32 LibraryLoadCounter = 0;
+	NSString* dst = [exeDir stringByAppendingPathComponent:[NSString stringWithFormat:@"libTestbed_hot_reload_%d.dylib", LibraryLoadCounter++]];
+	[[NSFileManager defaultManager] copyItemAtPath:src toPath:dst error:nil];
+
+	FGameModule GameModule = {};
+	GameModule.LibraryHandle = dlopen(dst.UTF8String, RTLD_NOW);
+	if (GameModule.LibraryHandle)
+	{
+		GameModule.GameGetSurfaceDesc = (FGameSurfaceDescFunc)dlsym(GameModule.LibraryHandle, "GameGetSurfaceDesc");
+		GameModule.GameInitialize = (FGameInitializeFunc)dlsym(GameModule.LibraryHandle, "GameInitialize");
+		GameModule.GameUpdateAndRender = (FGameUpdateAndRenderFunc)dlsym(GameModule.LibraryHandle, "GameUpdateAndRender");
+
+		GameModule.bIsValid = (GameModule.GameGetSurfaceDesc && GameModule.GameInitialize && GameModule.GameUpdateAndRender);
+	}
+
+	if (!GameModule.bIsValid)
+	{
+		// TODO(Rafis): Assert failed to load game library
+	}
+
+	GameModule.BasePath = src;
+	[GameModule.BasePath retain];
+
+	GameModule.HotLoadPath = dst;
+	[GameModule.HotLoadPath retain];
+
+	NSDictionary* attrs = [[NSFileManager defaultManager] attributesOfItemAtPath:GameModule.BasePath error:nil];
+	GameModule.BaseLastWriteTime = attrs[NSFileModificationDate];
+	[GameModule.BaseLastWriteTime retain];
+
+	return GameModule;
+}
+
+auto GameModuleUnload(FGameModule& GameModule) -> void
+{
+	if (GameModule.LibraryHandle)
+	{
+		dlclose(GameModule.LibraryHandle);
+
+		[[NSFileManager defaultManager] removeItemAtPath:GameModule.HotLoadPath error:nil];
+	}
+
+	[GameModule.BasePath release];
+	[GameModule.HotLoadPath release];
+	[GameModule.BaseLastWriteTime release];
+
+	GameModule = {};
+}
+
+auto GameModuleChanged(FGameModule& GameModule) -> bool
+{
+	NSDictionary* attrs = [[NSFileManager defaultManager] attributesOfItemAtPath:GameModule.BasePath error:nil];
+	NSDate* mod = attrs[NSFileModificationDate];
+	return (!GameModule.BaseLastWriteTime || ![mod isEqualToDate:GameModule.BaseLastWriteTime]);
+}
 
 @interface GameApplication : NSObject <NSApplicationDelegate, NSWindowDelegate, CAMetalDisplayLinkDelegate>
 
@@ -55,33 +135,156 @@
 	FOffscreenBuffer					_offscreenBuffer;
 	FInputGamepad						_gamepad;
 	FGameMemory							_gameMemory;
+	FGameModule							_gameModule;
+}
+
+// NOTE: Engine and Game initialization procedure
+- (void)applicationDidFinishLaunching:(NSNotification*)aNotification
+{
+	_gameModule = GameModuleLoad();
+
+	[self createWindow];
+	[self createView];
+	[self createGame];
+	[self addInputObservers];
+	[self createMetalResources];
+	[self showWindow];
+	[self evaluateCommandLine];
+	[self updateMaxEDRValue];
+
+	[NSNotificationCenter.defaultCenter addObserver:self 
+										   selector:@selector(maxEDRValueDidChange:)
+											   name:NSApplicationDidChangeScreenParametersNotification
+											 object:nil];
+
+	// Disable system cursor movement
+	// CGAssociateMouseAndMouseCursorPosition(false);
+
+	// // After initialization finished move app (and window) to a foreground.
+	[NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
+	[NSApp activateIgnoringOtherApps:YES];
+
+	// Creaet and Add display link to the run loop to have an entry point for the application
+	[self createMetalDisplayLink];
+	[_metalDisplayLink addToRunLoop:[NSRunLoop currentRunLoop] forMode:NSRunLoopCommonModes];
+}
+
+// NOTE: Update and Render handling
+- (void)metalDisplayLink:(CAMetalDisplayLink*)link needsUpdate:(CAMetalDisplayLinkUpdate*)update
+{
+	if (GameModuleChanged(_gameModule))
+	{
+		GameModuleUnload(_gameModule);
+		_gameModule = GameModuleLoad();
+	}
+
+	[self pollInput];
+	_gameModule.GameUpdateAndRender(_gameMemory, _lastDeltaTime, _offscreenBuffer, _gamepad);
+
+	@autoreleasepool
+	{
+		id<MTLCommandBuffer> pCmd = [_pCommandQueue commandBuffer];
+
+		// Fill texture
+		{
+			NSUInteger bytesPerRow = _offscreenBuffer.Width * _offscreenBuffer.BytesPerPixel;
+			MTLRegion region = MTLRegionMake2D(0, 0, _offscreenBuffer.Width, _offscreenBuffer.Height);
+			[_backBuffer replaceRegion:region mipmapLevel:0 withBytes:_offscreenBuffer.Backbuffer bytesPerRow:bytesPerRow];
+		}
+		// Present backbuffer render pass
+		{
+			_drawableRenderPass.colorAttachments[0].texture = update.drawable.texture;
+
+			id<MTLRenderCommandEncoder> encoder = [pCmd renderCommandEncoderWithDescriptor:_drawableRenderPass];
+			[encoder setRenderPipelineState:_pipelineState];
+			[encoder setFragmentTexture:_backBuffer atIndex:0];
+			[encoder setFragmentSamplerState:_backBufferSampler atIndex:0];
+			[encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
+			[encoder endEncoding];
+
+		}
+
+		[pCmd presentDrawable:update.drawable];
+		[pCmd commit];
+	}
+
+	CFTimeInterval currentTimestamp = CACurrentMediaTime();
+	_lastDeltaTime = (f32)(currentTimestamp - _lastTargetTimestamp);
+	_lastTargetTimestamp = currentTimestamp;
+}
+
+// NOTE: Raw input polling
+- (void)pollInput
+{
+	if (_nativeGamepad)
+	{
+		GCExtendedGamepad* controllerInput = _nativeGamepad.extendedGamepad;
+		if (controllerInput == nil)
+		{
+			return;
+		}
+
+		if (controllerInput)
+		{
+			[self macInputUpdateButtonState:_gamepad.GamepadA Input:controllerInput.buttonA];
+			[self macInputUpdateButtonState:_gamepad.GamepadB Input:controllerInput.buttonB];
+			[self macInputUpdateButtonState:_gamepad.GamepadX Input:controllerInput.buttonX];
+			[self macInputUpdateButtonState:_gamepad.GamepadY Input:controllerInput.buttonY];
+			[self macInputUpdateButtonState:_gamepad.GamepadDpadUp Input:controllerInput.buttonMenu];
+			[self macInputUpdateButtonState:_gamepad.GamepadDpadDown Input:controllerInput.buttonOptions];
+			[self macInputUpdateButtonState:_gamepad.GamepadDpadLeft Input:controllerInput.buttonMenu];
+			[self macInputUpdateButtonState:_gamepad.GamepadDpadRight Input:controllerInput.buttonOptions];
+			[self macInputUpdateButtonState:_gamepad.GamepadShoulderLeft Input:controllerInput.leftShoulder];
+			[self macInputUpdateButtonState:_gamepad.GamepadShoulderRight Input:controllerInput.rightShoulder];
+			[self macInputUpdateButtonState:_gamepad.GamepadThumbstickButtonLeft Input:controllerInput.leftThumbstickButton];
+			[self macInputUpdateButtonState:_gamepad.GamepadThumbstickButtonRight Input:controllerInput.rightThumbstickButton];
+			[self macInputUpdateButtonState:_gamepad.GamepadStart Input:controllerInput.buttonMenu];
+			[self macInputUpdateButtonState:_gamepad.GamepadOption Input:controllerInput.buttonOptions];
+			[self macInputUpdateButtonState:_gamepad.GamepadTriggerLeft Input:controllerInput.leftTrigger];
+			[self macInputUpdateButtonState:_gamepad.GamepadTriggerRight Input:controllerInput.rightTrigger];
+			[self macInputUpdateAxisState:_gamepad.GamepadDpadAxis Input:controllerInput.dpad];
+			[self macInputUpdateAxisState:_gamepad.GamepadThumbstickLeft Input:controllerInput.leftThumbstick];
+			[self macInputUpdateAxisState:_gamepad.GamepadThumbstickRight Input:controllerInput.rightThumbstick];
+		}
+	}
+
+	if (_keyboard)
+	{
+
+	}
+
+	if (_mouse)
+	{
+		
+	}
 }
 
 - (void)createWindow
 {
-	auto Properties = GameGetSurfaceDesc();
+	auto Properties = _gameModule.GameGetSurfaceDesc();
+
+	_targetFPS = Properties->TargetFPS;
 
 	NSWindowStyleMask mask = NSWindowStyleMaskTitled;
-	if (Properties.bClosable)
+	if (Properties->bClosable)
 	{
 		mask |= NSWindowStyleMaskClosable;
 	}
-	if (Properties.bResizable)
+	if (Properties->bResizable)
 	{
 		mask |= NSWindowStyleMaskResizable;
 	}
-	if (Properties.bMinimizable)
+	if (Properties->bMinimizable)
 	{
 		mask |= NSWindowStyleMaskMiniaturizable;
 	}
-	if (!Properties.bUseFrame)
+	if (!Properties->bUseFrame)
 	{
 		mask |= NSWindowStyleMaskFullSizeContentView;
 	}
 
 	NSScreen* screen = [NSScreen mainScreen];
-	NSRect contentRect = NSMakeRect(Properties.XPos, Properties.YPos, Properties.Width, Properties.Height);
-	// NSRect contentRect = NSMakeRect(Properties.XPos, Properties.YPos, _width, _height);
+	NSRect contentRect = NSMakeRect(Properties->XPos, Properties->YPos, Properties->Width, Properties->Height);
 	_window = [[GameWindow alloc] initWithContentRect:contentRect
 											styleMask:mask
 											  backing:NSBackingStoreBuffered
@@ -89,23 +292,23 @@
 											   screen:screen];
 
 	// Center window to the middle of the screen if needed
-	if (Properties.bCenterd)
+	if (Properties->bCenterd)
 	{
 		[_window center];
 	}
 	else
 	{
-		NSPoint point = NSMakePoint(Properties.XPos, Properties.YPos);
+		NSPoint point = NSMakePoint(Properties->XPos, Properties->YPos);
 		point  = [_window convertPointToScreen:point];
 		[_window setFrameOrigin:point];
 	}
 
-	[_window setHasShadow:Properties.bHasShadow];
-	[_window setTitlebarAppearsTransparent:!Properties.bUseFrame];
+	[_window setHasShadow:Properties->bHasShadow];
+	[_window setTitlebarAppearsTransparent:!Properties->bUseFrame];
 
 	_window.releasedWhenClosed = NO;
-	_window.minSize = NSMakeSize(Properties.MinWidth, Properties.MinHeight);
-	_window.maxSize = NSMakeSize(Properties.MaxWidth, Properties.MaxHeight);
+	_window.minSize = NSMakeSize(Properties->MinWidth, Properties->MinHeight);
+	_window.maxSize = NSMakeSize(Properties->MaxWidth, Properties->MaxHeight);
 	_window.delegate = self;
 
 	[self updateWindowTitle:_window];
@@ -171,11 +374,10 @@
 	_gameMemory.PermanentStorage = (void*)addr;
 	_gameMemory.TempStorage = (void*)(addr + _gameMemory.PermanentStorageSize);
 
-	GameInitialize(_gameMemory);
+	_gameModule.GameInitialize(_gameMemory);
 
 	// NOTE: Before game starts calculate delta time for the very first frame,
 	// it is not necessary but i did it.
-	_targetFPS = 120.f;
 	_lastDeltaTime = 1000.0f / _targetFPS;
 }
 
@@ -309,82 +511,14 @@
 	}
 }
 
-#pragma region CAMetalDisplayLinkDelegate
-- (void)metalDisplayLink:(CAMetalDisplayLink*)link needsUpdate:(CAMetalDisplayLinkUpdate*)update
-{
-	[self pollInput];
-
-	GameUpdateAndRender(_gameMemory, _lastDeltaTime, _offscreenBuffer, _gamepad);
-
-	@autoreleasepool
-	{
-		id<MTLCommandBuffer> pCmd = [_pCommandQueue commandBuffer];
-
-		// Fill texture
-		{
-			NSUInteger bytesPerRow = _offscreenBuffer.Width * _offscreenBuffer.BytesPerPixel;
-			MTLRegion region = MTLRegionMake2D(0, 0, _offscreenBuffer.Width, _offscreenBuffer.Height);
-			[_backBuffer replaceRegion:region mipmapLevel:0 withBytes:_offscreenBuffer.Backbuffer bytesPerRow:bytesPerRow];
-		}
-		// Present backbuffer render pass
-		{
-			_drawableRenderPass.colorAttachments[0].texture = update.drawable.texture;
-
-			id<MTLRenderCommandEncoder> encoder = [pCmd renderCommandEncoderWithDescriptor:_drawableRenderPass];
-			[encoder setRenderPipelineState:_pipelineState];
-			[encoder setFragmentTexture:_backBuffer atIndex:0];
-			[encoder setFragmentSamplerState:_backBufferSampler atIndex:0];
-			[encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
-			[encoder endEncoding];
-
-		}
-
-		[pCmd presentDrawable:update.drawable];
-		[pCmd commit];
-	}
-
-	CFTimeInterval currentTimestamp = CACurrentMediaTime();
-	_lastDeltaTime = (f32)(currentTimestamp - _lastTargetTimestamp);
-	_lastTargetTimestamp = currentTimestamp;
-}
-#pragma endregion CAMetalDisplayLinkDelegate
-
-#pragma region NSApplicationDelegate
 - (BOOL)applicationShouldTerminateAfterLastWindowClosed:(NSApplication*)sender
 {
 	return YES;
 }
 
-- (void)applicationDidFinishLaunching:(NSNotification*)aNotification
-{
-	[self createWindow];
-	[self createView];
-	[self createGame];
-	[self addInputObservers];
-	[self createMetalResources];
-	[self showWindow];
-	[self evaluateCommandLine];
-	[self updateMaxEDRValue];
-
-	[NSNotificationCenter.defaultCenter addObserver:self 
-										   selector:@selector(maxEDRValueDidChange:)
-											   name:NSApplicationDidChangeScreenParametersNotification
-											 object:nil];
-
-	// Disable system cursor movement
-	// CGAssociateMouseAndMouseCursorPosition(false);
-
-	// // After initialization finished move app (and window) to a foreground.
-	[NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
-	[NSApp activateIgnoringOtherApps:YES];
-
-	[self createMetalDisplayLink];
-	// Add display link to the run loop to have an entry point for the application
-	[_metalDisplayLink addToRunLoop:[NSRunLoop currentRunLoop] forMode:NSRunLoopCommonModes];
-}
-
 - (void)applicationWillTerminate:(NSNotification*)notification
 {
+	GameModuleUnload(_gameModule);
 }
 
 - (void)applicationWillResignActive:(NSNotification*) notification
@@ -394,9 +528,7 @@
 - (void)applicationWillBecomeActive:(NSNotification*) notification
 {
 }
-#pragma endregion NSApplicationDelegate
 
-#pragma region NSWindowDelegate
 - (void)updateMaxEDRValue
 {
 	float maxEDRValue = _window.screen.maximumExtendedDynamicRangeColorComponentValue;
@@ -455,54 +587,6 @@
 			_metalLayer.drawableSize = newDrawableSize;
 			_metalLayer.contentsScale = _window.backingScaleFactor;
 		}
-	}
-}
-#pragma endregion NSWindowDelegate
-
-#pragma region Input Observers
-
-- (void)pollInput
-{
-	if (_nativeGamepad)
-	{
-		GCExtendedGamepad* controllerInput = _nativeGamepad.extendedGamepad;
-		if (controllerInput == nil)
-		{
-			return;
-		}
-
-		if (controllerInput)
-		{
-			[self macInputUpdateButtonState:_gamepad.GamepadA Input:controllerInput.buttonA];
-			[self macInputUpdateButtonState:_gamepad.GamepadB Input:controllerInput.buttonB];
-			[self macInputUpdateButtonState:_gamepad.GamepadX Input:controllerInput.buttonX];
-			[self macInputUpdateButtonState:_gamepad.GamepadY Input:controllerInput.buttonY];
-			[self macInputUpdateButtonState:_gamepad.GamepadDpadUp Input:controllerInput.buttonMenu];
-			[self macInputUpdateButtonState:_gamepad.GamepadDpadDown Input:controllerInput.buttonOptions];
-			[self macInputUpdateButtonState:_gamepad.GamepadDpadLeft Input:controllerInput.buttonMenu];
-			[self macInputUpdateButtonState:_gamepad.GamepadDpadRight Input:controllerInput.buttonOptions];
-			[self macInputUpdateButtonState:_gamepad.GamepadShoulderLeft Input:controllerInput.leftShoulder];
-			[self macInputUpdateButtonState:_gamepad.GamepadShoulderRight Input:controllerInput.rightShoulder];
-			[self macInputUpdateButtonState:_gamepad.GamepadThumbstickButtonLeft Input:controllerInput.leftThumbstickButton];
-			[self macInputUpdateButtonState:_gamepad.GamepadThumbstickButtonRight Input:controllerInput.rightThumbstickButton];
-			[self macInputUpdateButtonState:_gamepad.GamepadStart Input:controllerInput.buttonMenu];
-			[self macInputUpdateButtonState:_gamepad.GamepadOption Input:controllerInput.buttonOptions];
-			[self macInputUpdateButtonState:_gamepad.GamepadTriggerLeft Input:controllerInput.leftTrigger];
-			[self macInputUpdateButtonState:_gamepad.GamepadTriggerRight Input:controllerInput.rightTrigger];
-			[self macInputUpdateAxisState:_gamepad.GamepadDpadAxis Input:controllerInput.dpad];
-			[self macInputUpdateAxisState:_gamepad.GamepadThumbstickLeft Input:controllerInput.leftThumbstick];
-			[self macInputUpdateAxisState:_gamepad.GamepadThumbstickRight Input:controllerInput.rightThumbstick];
-		}
-	}
-
-	if (_keyboard)
-	{
-
-	}
-
-	if (_mouse)
-	{
-		
 	}
 }
 

@@ -20,7 +20,37 @@
 			},
 			"problemMatcher": "$gcc",
 			"group": "build",
-			"detail": "Build game",
+			"detail": "Build Engine and Testbed",
+			"presentation": {
+				"echo": true,
+				"reveal": "silent",
+				"focus": false,
+				"panel": "dedicated"
+			},
+		},
+		{
+			"type": "shell",
+			"label": "Build Testbed",
+			"command": "make",
+			"args": [
+				"-j12",
+				"Testbed",
+				"config=debug_mac"
+			],
+			"windows": {
+				"command": "make",
+				"args": [
+					"-j12",
+					"Testbed",
+					"config=debug_windows"
+				],
+			},
+			"options": {
+				"cwd": "${workspaceFolder}"
+			},
+			"problemMatcher": "$gcc",
+			"group": "build",
+			"detail": "Build Testbed game",
 			"presentation": {
 				"echo": true,
 				"reveal": "silent",

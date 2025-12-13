@@ -6,7 +6,7 @@
 			"type": "lldb",
 			"request": "launch",
 			"cwd": "${workspaceFolder}",
-			"program": "Binaries/Mac/Debug/Testbed",
+			"program": "Binaries/Mac/Debug/ReEngine",
 			"osx": {
 				"env": {
 					// Enables Metal Performance HUD
@@ -20,7 +20,7 @@
 				}
 			},
 			"windows": {
-				"program": "Binareis/Windows/Debug/Testbed.exe",
+				"program": "Binareis/Windows/Debug/ReEngine.exe",
 			},
 			"preLaunchTask": "Build",
 			"console": "internalConsole",

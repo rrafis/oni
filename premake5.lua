@@ -1,6 +1,9 @@
 workspace "RE"
 	staticruntime "Off"
 
+	targetdir "Binaries/%{cfg.platform}/%{cfg.buildcfg}"
+	objdir "Intermediate"
+
 	configurations {
 		"Debug",
 		"Shipping",
@@ -52,40 +55,5 @@ workspace "RE"
 		}
 	filter {}
 
-project "Testbed"
-	kind "ConsoleApp"
-	language "C++"
-	cppdialect "C++20"
-
-	targetdir "Binaries/%{cfg.platform}/%{cfg.buildcfg}"
-	objdir "Intermediate"
-
-	includedirs {
-		"Source",
-	}
-
-	externalincludedirs {
-		"ThirdParty/entt/src",
-		"ThirdParty/glm",
-	}
-
-	files {
-		"Source/**.*",
-	}
-
-	filter "platforms:Mac"
-		externalincludedirs {
-			"ThirdParty/metal-cpp",
-		}
-
-		links {
-			"AppKit.framework",
-			"Foundation.framework",
-			"Metal.framework",
-			"MetalFX.framework",
-			"MetalKit.framework",
-			"QuartzCore.framework",
-			"GameController.framework",
-		}
-	filter {}
-
+include "Engine/premake5.lua"
+include "Testbed/premake5.lua"
