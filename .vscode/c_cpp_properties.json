@@ -1,9 +1,19 @@
 {
 	"env": {
-		"baseIncludePaths" : [
+		"baseIncludePaths": [
 			"${workspaceFolder}/Engine/Source",
 			"${workspaceFolder}/ThirdParty/entt/src",
 			"${workspaceFolder}/ThirdParty/glm"
+		],
+		"baseDebugDefines": [
+			"GLM_FORCE_INTRINSICS",
+			"RE_DEBUG",
+			"RE_ENABLE_ASSERT",
+			"RE_INTERNAL"
+		],
+		"baseShippingDefines": [
+			"GLM_FORCE_INTRINSICS",
+			"RE_SHIPPING"
 		]
 	},
 	"configurations": [
@@ -14,9 +24,7 @@
 			],
 			"defines": [
 				"RE_PLATFORM=Windows",
-				"RE_DEBUG",
-				"RE_ENABLE_ASSERT",
-				"RE_INTERNAL"
+				"${baseDebugDefines}"
 			],
 			// "compilerPath": "",
 			"cppStandard": "c++20",
@@ -29,7 +37,7 @@
 			],
 			"defines": [
 				"RE_PLATFORM=Windows",
-				"RE_SHIPPING"
+				"${baseShippingDefines}"
 			],
 			// "compilerPath": "",
 			"cppStandard": "c++20",
@@ -43,9 +51,7 @@
 			],
 			"defines": [
 				"RE_PLATFORM=Mac",
-				"RE_DEBUG",
-				"RE_ENABLE_ASSERT",
-				"RE_INTERNAL"
+				"${baseDebugDefines}"
 			],
 			"macFrameworkPath": [
 				"/System/Library/Frameworks",
@@ -63,7 +69,7 @@
 			],
 			"defines": [
 				"RE_PLATFORM=Mac",
-				"RE_SHIPPING"
+				"${baseShippingDefines}"
 			],
 			"macFrameworkPath": [
 				"/System/Library/Frameworks",
