@@ -594,6 +594,8 @@ auto GameModuleChanged(FGameModule& GameModule) -> bool
 			_metalLayer.drawableSize = newDrawableSize;
 			_metalLayer.contentsScale = _window.backingScaleFactor;
 		}
+
+		[self recreateBackbufferAndBackingStorage];
 	}
 }
 
