@@ -250,7 +250,14 @@ auto GameModuleChanged(FGameModule& GameModule) -> bool
 
 	if (_keyboard)
 	{
-
+		auto buttonW = [_keyboard.keyboardInput buttonForKeyCode:GCKeyCodeKeyW];
+		auto buttonS = [_keyboard.keyboardInput buttonForKeyCode:GCKeyCodeKeyS];
+		auto buttonA = [_keyboard.keyboardInput buttonForKeyCode:GCKeyCodeKeyA];
+		auto buttonD = [_keyboard.keyboardInput buttonForKeyCode:GCKeyCodeKeyD];
+		[self macInputUpdateButtonState:_gamepad.GamepadDpadUp Input:buttonW];
+		[self macInputUpdateButtonState:_gamepad.GamepadDpadDown Input:buttonS];
+		[self macInputUpdateButtonState:_gamepad.GamepadDpadLeft Input:buttonA];
+		[self macInputUpdateButtonState:_gamepad.GamepadDpadRight Input:buttonD];
 	}
 
 	if (_mouse)
@@ -616,7 +623,7 @@ auto GameModuleChanged(FGameModule& GameModule) -> bool
 		return;
 	}
 
-	_keyboard = nil;
+	_keyboard = keyboard;
 }
 
 /// Tells the game input class when a keyboard disconnects.
