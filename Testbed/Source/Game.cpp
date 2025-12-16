@@ -257,7 +257,9 @@ auto DrawTilemap(FOffscreenBuffer& Buffer, const FTileWorld& World, const glm::i
 			{
 				auto TileID = GetTimemapValueUnchecked(World, *Tilemap, glm::ivec2{ Column, Row });
 				auto DrawSize = glm::vec2(World.TileWidthInPixels) - World.Padding * 2.0f;
-				auto DrawPosition = World.WorldPosition + glm::vec2(Column, Row) * World.TileWidthInPixels + World.Padding;
+				auto DrawPosition = World.WorldPosition;
+				DrawPosition += (glm::vec2(Column, Row) * World.TileWidthInPixels + World.Padding) * glm::vec2(1.0f, -1.0f);
+				DrawPosition += DrawSize * glm::vec2(0.0f, -1.0f);
 				DrawRect(Buffer, DrawPosition, DrawPosition + DrawSize, { TileID, TileID, TileID });
 				// DrawRect(Buffer, DrawPosition, DrawPosition + 1.0f, { 1, 0, 0 });
 				// DrawRect(Buffer, DrawPosition - World.Padding * 2.0f, DrawPosition, { 1, 1, 0 });
@@ -269,14 +271,17 @@ auto DrawTilemap(FOffscreenBuffer& Buffer, const FTileWorld& World, const glm::i
 auto DrawPlayer(FOffscreenBuffer& Buffer, const FTileWorld& World, const FWorldPosition& Position, const glm::vec2& Size, const glm::vec3& Color)
 {
 	auto DrawSize = Size * World.PixelsPerMeter;
-	auto DrawPosition = World.WorldPosition + (glm::vec2)Position.Tile * World.TileWidthInPixels + Position.Local * World.PixelsPerMeter
-		- DrawSize * glm::vec2(0.5f, 1.0f);
+	auto DrawPosition = World.WorldPosition;
+	DrawPosition += (glm::vec2(Position.Tile) * World.TileWidthInPixels + Position.Local * World.PixelsPerMeter) * glm::vec2(1.0f, -1.0f);
+	DrawPosition -= DrawSize * glm::vec2(0.5f, 1.0f);
 
 #if defined(RE_INTERNAL)
 	// Draw the tile player is on
 	{
-		auto DebugDrawSize = glm::vec2(World.TileWidthInPixels) - World.Padding * 2.0f;
-		auto DebugDrawPosition = World.WorldPosition + glm::vec2(Position.Tile) * World.TileWidthInPixels + World.Padding;
+		auto DebugDrawSize = glm::vec2(World.TileWidthInPixels);
+		auto DebugDrawPosition = World.WorldPosition;
+		DebugDrawPosition += glm::vec2(Position.Tile) * World.TileWidthInPixels * glm::vec2(1.0f, -1.0f);
+		DebugDrawPosition += DebugDrawSize * glm::vec2(0.0f, -1.0f);
 		DrawRect(Buffer, DebugDrawPosition, DebugDrawPosition + DebugDrawSize, glm::vec3{ 0.3f, 0.8f, 0.1f });
 	}
 #endif
@@ -326,7 +331,7 @@ RE_API auto GameUpdateAndRender(FGameMemory& Memory, f32 DeltaTime, FOffscreenBu
 	World.Tilemaps = &TileMaps[0][0];
 	World.WorldDimension = { 2, 2 };
 	World.TilemapDimension = { s_TileMapX, s_TileMapY };
-	World.WorldPosition = glm::vec2(0.0f);
+	World.WorldPosition = glm::vec2(0.0f, Buffer.Height);
 	World.Padding = glm::vec2(1.f);
 	World.TileWidthInMeter = 1.5f;
 	World.TileWidthInPixels = 60;
@@ -334,19 +339,19 @@ RE_API auto GameUpdateAndRender(FGameMemory& Memory, f32 DeltaTime, FOffscreenBu
 
 	if (Gamepad.GamepadX.bPressed)
 	{
-		State.PlayerPosition.Tilemap = { 0, 0 };
+		State.PlayerPosition.Tilemap = { 0, 1 };
 	}
 	if (Gamepad.GamepadY.bPressed)
 	{
-		State.PlayerPosition.Tilemap = { 1, 0 };
+		State.PlayerPosition.Tilemap = { 1, 1 };
 	}
 	if (Gamepad.GamepadA.bPressed)
 	{
-		State.PlayerPosition.Tilemap = { 0, 1 };
+		State.PlayerPosition.Tilemap = { 0, 0 };
 	}
 	if (Gamepad.GamepadB.bPressed)
 	{
-		State.PlayerPosition.Tilemap = { 1, 1 };
+		State.PlayerPosition.Tilemap = { 1, 0 };
 	}
 
 	if (Gamepad.GamepadOption.bPressed)

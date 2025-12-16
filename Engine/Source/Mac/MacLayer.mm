@@ -599,7 +599,7 @@ auto GameModuleChanged(FGameModule& GameModule) -> bool
 - (void)macInputUpdateAxisState:(FInputAxisState&)State Input:(GCControllerDirectionPad*)Input
 {
 	State.X = Input.xAxis.value;
-	State.Y = -1.0f * Input.yAxis.value;
+	State.Y = Input.yAxis.value;
 }
 
 /// Tells the game input class when a keyboard connects.
