@@ -18,5 +18,5 @@ project "Testbed"
 	}
 
 	files {
-		"Source/**.*",
+		"Source/Game.cpp",
 	}

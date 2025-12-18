@@ -2,8 +2,6 @@
 
 #include <sys/types.h>
 
-#include <glm/glm.hpp>
-
 // Unsigned int types.
 
 /** @brief Unsigned 8-bit integer */
