@@ -116,7 +116,7 @@ RE_API auto GameInitialize(FGameMemory& Memory) -> void
 	State.PlayerSize = glm::vec2{ 1.0f };
 
 	State.PlayerPosition.Tile = glm::uvec2(5, 1);
-	State.PlayerPosition.Local = glm::vec2(0.75f, 0.25f);
+	State.PlayerPosition.Local = glm::vec2(0.0f, 0.0f);
 }
 
 inline auto GetTileValue(const FTileWorld& World, const FTileChunk& TileMap, glm::uvec2 Tile) -> u32
@@ -138,7 +138,7 @@ inline auto GetChunk(const FTileWorld& World, const glm::uvec2& TileChunk) -> FT
 inline auto CalculateWorldPosition(const FTileWorld& World, const FWorldPosition& Position) -> FWorldPosition
 {
 	FWorldPosition NewPosition = Position;
-	auto Offset = glm::ivec2(glm::floor(Position.Local / World.TileWidthInMeter));
+	auto Offset = glm::ivec2(glm::round(Position.Local / (World.TileWidthInMeter)));
 	NewPosition.Tile += Offset;
 	NewPosition.Local -= glm::vec2(Offset) * World.TileWidthInMeter;
 
@@ -219,9 +219,6 @@ auto DrawUVGradient(FOffscreenBuffer& Buffer, FGameState& State, FInputGamepad& 
 	}
 }
 
-auto ClearScreen(FOffscreenBuffer& Buffer, glm::vec3 InColor)
-{
-}
 
 RE_API auto GameUpdateAndRender(FGameMemory& Memory, f32 DeltaTime, FOffscreenBuffer& Buffer, const FInputGamepad& Gamepad) -> void
 {
@@ -245,7 +242,7 @@ RE_API auto GameUpdateAndRender(FGameMemory& Memory, f32 DeltaTime, FOffscreenBu
 	if (Gamepad.GamepadOption.bPressed)
 	{
 		State.PlayerPosition.Tile = glm::uvec2(5, 1);
-		State.PlayerPosition.Local = glm::vec2(0.75f, 0.25f);
+		State.PlayerPosition.Local = glm::vec2(0.0f, 0.0f);
 	}
 
 	auto LeftStickDirection = glm::vec2(Gamepad.GamepadThumbstickLeft.X, Gamepad.GamepadThumbstickLeft.Y);
@@ -271,15 +268,14 @@ RE_API auto GameUpdateAndRender(FGameMemory& Memory, f32 DeltaTime, FOffscreenBu
 		LeftStickDirection = glm::normalize(LeftStickDirection);
 	}
 	auto CurrentSpeedInMeters = (LeftStickDirection * State.PlayerSpeed * DeltaTime);
-	auto PartialPlayerSizeInMeters = State.PlayerSize * glm::vec2(0.5f, 0.0f);
 
 	auto NewPlayerPos = State.PlayerPosition;
 	auto NewPlayerPosLeft = State.PlayerPosition;
 	auto NewPlayerPosRight = State.PlayerPosition;
 
 	NewPlayerPos.Local += CurrentSpeedInMeters;
-	NewPlayerPosLeft.Local += CurrentSpeedInMeters - PartialPlayerSizeInMeters;
-	NewPlayerPosRight.Local += CurrentSpeedInMeters + PartialPlayerSizeInMeters;
+	NewPlayerPosLeft.Local += CurrentSpeedInMeters + State.PlayerSize * glm::vec2(-0.5f, -0.5f);
+	NewPlayerPosRight.Local += CurrentSpeedInMeters + State.PlayerSize * glm::vec2(0.5f, -0.5f);
 
 	NewPlayerPos = CalculateWorldPosition(World, NewPlayerPos);
 	NewPlayerPosLeft = CalculateWorldPosition(World, NewPlayerPosLeft);
@@ -293,8 +289,8 @@ RE_API auto GameUpdateAndRender(FGameMemory& Memory, f32 DeltaTime, FOffscreenBu
 	// Clear screen
 	DrawRect(Buffer, { 0.0f, 0.0f }, { Buffer.Width, Buffer.Height }, { 0.08f, 0.17f, 0.85f });
 
-	i32 HalfTilesPerScreenHorizontal = (i32)(glm::floor(Buffer.Width / World.TileWidthInPixels) + 2) / 2;
-	i32 HalfTilesPerScreenVertical = (i32)(glm::floor(Buffer.Height / World.TileWidthInPixels) + 2) / 2;
+	i32 HalfTilesPerScreenHorizontal = (i32)(glm::floor(Buffer.Width / World.TileWidthInPixels) + 1) / 2;
+	i32 HalfTilesPerScreenVertical = (i32)(glm::floor(Buffer.Height / World.TileWidthInPixels) + 1) / 2;
 
 	// Draw tiles
 	for (i32 RelRow = -HalfTilesPerScreenVertical; RelRow <= HalfTilesPerScreenVertical; ++RelRow)
@@ -306,12 +302,22 @@ RE_API auto GameUpdateAndRender(FGameMemory& Memory, f32 DeltaTime, FOffscreenBu
 			auto TileID = GetTileValue(World, Tile);
 			auto DrawSize = glm::vec2(World.TileWidthInPixels) - World.Padding * 2.0f;
 			auto DrawPosition = World.WorldPosition;
-			DrawPosition -= (State.PlayerPosition.Local * World.PixelsPerMeter) * glm::vec2(1.0f, -1.0f); // TEMP
+			// Account for the 0,0 position of the tile is at the center now
+			DrawPosition.x -= World.TileWidthInMeter * World.PixelsPerMeter * 0.5f;
+			DrawPosition.y += World.TileWidthInMeter * World.PixelsPerMeter * 0.5f;
+			// Account for the player position as everything is drawn relative to the player
+			DrawPosition -= (State.PlayerPosition.Local * World.PixelsPerMeter) * glm::vec2(1.0f, -1.0f);
 			DrawPosition += (glm::vec2(RelColumn, RelRow) * World.TileWidthInPixels + World.Padding) * glm::vec2(1.0f, -1.0f);
 			DrawPosition += DrawSize * glm::vec2(0.0f, -1.0f);
 			DrawRect(Buffer, DrawPosition, DrawPosition + DrawSize, { TileID, TileID, TileID });
-			// DrawRect(Buffer, DrawPosition, DrawPosition + 1.0f, { 1, 0, 0 });
-			// DrawRect(Buffer, DrawPosition - World.Padding * 2.0f, DrawPosition, { 1, 1, 0 });
+
+#if defined(RE_INTERNAL)
+			// Debug draws
+			{
+				// DrawRect(Buffer, DrawPosition, DrawPosition + 1.0f, { 1, 0, 0 });
+				// DrawRect(Buffer, DrawPosition - World.Padding * 2.0f, DrawPosition, { 1, 1, 0 });
+			}
+#endif
 		}
 	}
 
@@ -320,14 +326,18 @@ RE_API auto GameUpdateAndRender(FGameMemory& Memory, f32 DeltaTime, FOffscreenBu
 		auto DrawSize = State.PlayerSize * World.PixelsPerMeter;
 		auto DrawPosition = World.WorldPosition;
 		// DrawPosition += (Position.Local * World.PixelsPerMeter) * glm::vec2(1.0f, -1.0f);
-		DrawPosition -= DrawSize * glm::vec2(0.5f, 1.0f);
+		DrawPosition -= DrawSize * glm::vec2(0.5f, 0.5f);
 
 #if defined(RE_INTERNAL)
 		// Draw the tile player is on
 		{
 			auto DebugDrawSize = glm::vec2(World.TileWidthInPixels);
 			auto DebugDrawPosition = World.WorldPosition;
-			DebugDrawPosition -= (State.PlayerPosition.Local * World.PixelsPerMeter) * glm::vec2(1.0f, -1.0f); // TEMP
+			// Account for the 0,0 position of the tile is at the center now
+			DebugDrawPosition.x -= World.TileWidthInMeter * World.PixelsPerMeter * 0.5f;
+			DebugDrawPosition.y += World.TileWidthInMeter * World.PixelsPerMeter * 0.5f;
+			// Account for the player position as everything is drawn relative to the player
+			DebugDrawPosition -= (State.PlayerPosition.Local * World.PixelsPerMeter) * glm::vec2(1.0f, -1.0f);
 			DebugDrawPosition += glm::vec2(0, 0) * World.TileWidthInPixels * glm::vec2(1.0f, -1.0f);
 			DebugDrawPosition += DebugDrawSize * glm::vec2(0.0f, -1.0f);
 			DrawRect(Buffer, DebugDrawPosition, DebugDrawPosition + DebugDrawSize, glm::vec3{ 0.3f, 0.8f, 0.1f });
@@ -335,5 +345,10 @@ RE_API auto GameUpdateAndRender(FGameMemory& Memory, f32 DeltaTime, FOffscreenBu
 #endif
 
 		DrawRect(Buffer, DrawPosition, DrawPosition + DrawSize, glm::vec3(0.65f, 0.08f, 0.15f));
+	}
+
+	// Center of the screen
+	{
+		DrawRect(Buffer, World.WorldPosition - glm::vec2(4.f), World.WorldPosition + glm::vec2(4.f), glm::vec3(0.15f, 0.08f, 0.10f));
 	}
 }

@@ -254,10 +254,12 @@ auto GameModuleChanged(FGameModule& GameModule) -> bool
 		auto buttonS = [_keyboard.keyboardInput buttonForKeyCode:GCKeyCodeKeyS];
 		auto buttonA = [_keyboard.keyboardInput buttonForKeyCode:GCKeyCodeKeyA];
 		auto buttonD = [_keyboard.keyboardInput buttonForKeyCode:GCKeyCodeKeyD];
+		auto buttonR = [_keyboard.keyboardInput buttonForKeyCode:GCKeyCodeKeyR];
 		[self macInputUpdateButtonState:_gamepad.GamepadDpadUp Input:buttonW];
 		[self macInputUpdateButtonState:_gamepad.GamepadDpadDown Input:buttonS];
 		[self macInputUpdateButtonState:_gamepad.GamepadDpadLeft Input:buttonA];
 		[self macInputUpdateButtonState:_gamepad.GamepadDpadRight Input:buttonD];
+		[self macInputUpdateButtonState:_gamepad.GamepadOption Input:buttonR];
 	}
 
 	if (_mouse)
