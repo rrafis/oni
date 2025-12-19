@@ -1,11 +1,12 @@
 #include "Tilemap.h"
 
 #include "GameMath.h"
+#include "Memory.h"
 
 namespace re::Tilemap
 {
-	constexpr u32 ChunkShift = 8;
-	constexpr u32 ChunkMask = 0xFF;
+	constexpr u32 ChunkShift = 4;
+	constexpr u32 ChunkMask = (1u << ChunkShift) - 1u;
 
 	inline auto GetChunkCoordinate(const FTilePosition& Tile) -> FChunkCoordinate
 	{
@@ -20,7 +21,9 @@ namespace re::Tilemap
 	inline auto GetChunk(const FWorld& TileWorld, const FChunkCoordinate& ChunkCoord) -> FChunk*
 	{
 		if (ChunkCoord >= FChunkCoordinate(0) && ChunkCoord < TileWorld.WorldDimension)
-			return &TileWorld.Tilemaps[ChunkCoord.y * TileWorld.WorldDimension.x + ChunkCoord.x];
+		{
+			return &TileWorld.Chunks[ChunkCoord.y * TileWorld.WorldDimension.x + ChunkCoord.x];
+		}
 
 		return nullptr;
 	}
@@ -28,20 +31,41 @@ namespace re::Tilemap
 	inline auto GetTileValue(const FWorld& TileWorld, const FChunk& Chunk, const FTileCoordinate& TileCoord) -> u32
 	{
 		if (TileCoord >= FTileCoordinate(0) && TileCoord < TileWorld.ChunkDimension)
+		{
 			return Chunk.Tiles[TileCoord.y * TileWorld.ChunkDimension.x + TileCoord.x];
+		}
 
 		return 0;
 	}
 
 	inline auto GetTileValue(const FWorld& TileWorld, const FTilePosition& TilePos) -> u32
 	{
-		FChunk* Chunk = GetChunk(TileWorld, GetChunkCoordinate(TilePos));
-		if (Chunk)
+		if (FChunk* Chunk = GetChunk(TileWorld, GetChunkCoordinate(TilePos)))
+		{
 			return GetTileValue(TileWorld, *Chunk, GetTileCoordinate(TilePos));
+		}
+
 		return 0;
 	}
 
-	inline auto IsWorldPointEmpty(const FWorld& TileWorld, const FTilemapPosition& Position) -> bool
+	inline auto SetTileValue(const FWorld& TileWorld, const FChunk& Chunk, const FTileCoordinate& TileCoord, u32 Value) -> void
+	{
+		if (TileCoord >= FTileCoordinate(0) && TileCoord < TileWorld.ChunkDimension)
+			Chunk.Tiles[TileCoord.y * TileWorld.ChunkDimension.x + TileCoord.x] = Value;
+	}
+
+	inline auto SetTileValue(Memory::Arena::FMemoryArena& Arena, const FWorld& TileWorld, const FTilePosition& TilePos, u32 Value) -> void
+	{
+		FChunk* Chunk = GetChunk(TileWorld, GetChunkCoordinate(TilePos));
+		if (!Chunk)
+		{
+		}
+
+		if (Chunk)
+			SetTileValue(TileWorld, *Chunk, GetTileCoordinate(TilePos), Value);
+	}
+
+	inline auto IsTilemapPointEmpty(const FWorld& TileWorld, const FTilemapPosition& Position) -> bool
 	{
 		return GetTileValue(TileWorld, Position.Tile) == 0;
 	}

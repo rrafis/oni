@@ -28,10 +28,8 @@ namespace re::Tilemap
 
 		glm::uvec2 WorldDimension;
 		glm::uvec2 ChunkDimension;
-		FChunk* Tilemaps;
 
-		glm::vec2 DrawPosition; // Upper left corner of the tile map
-		glm::vec2 Padding;		// Padding for drawing
+		FChunk* Chunks;
 
 		f32 TileWidthInMeter;
 		f32 TileWidthInPixels;
