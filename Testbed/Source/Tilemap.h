@@ -16,23 +16,25 @@ namespace re::Tilemap
 		glm::vec2 Local;
 	};
 
+	enum class ETileType : u32
+	{
+		Uninitialized = 0,
+		Empty = 1,
+		Wall = 2,
+
+		Invalid = UINT32_MAX
+	};
+
 	struct FChunk
 	{
-		u32* Tiles;
+		ETileType* Tiles;
 	};
 
 	struct FWorld
 	{
-		u32 ChunkShift;
-		u32 ChunkMask;
-
+		FChunk* Chunks;
 		glm::uvec2 WorldDimension;
 		glm::uvec2 ChunkDimension;
-
-		FChunk* Chunks;
-
 		f32 TileWidthInMeter;
-		f32 TileWidthInPixels;
-		f32 PixelsPerMeter;
 	};
 } // namespace re::Tilemap

@@ -28,46 +28,51 @@ namespace re::Tilemap
 		return nullptr;
 	}
 
-	inline auto GetTileValue(const FWorld& TileWorld, const FChunk& Chunk, const FTileCoordinate& TileCoord) -> u32
+	inline auto GetTileValue(const FWorld& TileWorld, const FChunk& Chunk, const FTileCoordinate& TileCoord) -> ETileType
 	{
 		if (TileCoord >= FTileCoordinate(0) && TileCoord < TileWorld.ChunkDimension)
 		{
 			return Chunk.Tiles[TileCoord.y * TileWorld.ChunkDimension.x + TileCoord.x];
 		}
 
-		return 0;
+		return ETileType::Invalid;
 	}
 
-	inline auto GetTileValue(const FWorld& TileWorld, const FTilePosition& TilePos) -> u32
+	inline auto GetTileValue(const FWorld& TileWorld, const FTilePosition& TilePos) -> ETileType
 	{
-		if (FChunk* Chunk = GetChunk(TileWorld, GetChunkCoordinate(TilePos)))
+		FChunk* Chunk = GetChunk(TileWorld, GetChunkCoordinate(TilePos));
+		if (Chunk && Chunk->Tiles)
 		{
 			return GetTileValue(TileWorld, *Chunk, GetTileCoordinate(TilePos));
 		}
 
-		return 0;
+		return ETileType::Invalid;
 	}
 
-	inline auto SetTileValue(const FWorld& TileWorld, const FChunk& Chunk, const FTileCoordinate& TileCoord, u32 Value) -> void
+	inline auto SetTileValue(const FWorld& TileWorld, const FChunk& Chunk, const FTileCoordinate& TileCoord, ETileType Value) -> void
 	{
 		if (TileCoord >= FTileCoordinate(0) && TileCoord < TileWorld.ChunkDimension)
+		{
 			Chunk.Tiles[TileCoord.y * TileWorld.ChunkDimension.x + TileCoord.x] = Value;
+		}
 	}
 
-	inline auto SetTileValue(Memory::Arena::FMemoryArena& Arena, const FWorld& TileWorld, const FTilePosition& TilePos, u32 Value) -> void
+	inline auto SetTileValue(Memory::Arena::FMemoryArena& Arena, const FWorld& TileWorld, const FTilePosition& TilePos, ETileType Value) -> void
 	{
-		FChunk* Chunk = GetChunk(TileWorld, GetChunkCoordinate(TilePos));
-		if (!Chunk)
+		if (FChunk* Chunk = GetChunk(TileWorld, GetChunkCoordinate(TilePos)))
 		{
-		}
+			if (!Chunk->Tiles)
+			{
+				Chunk->Tiles = Memory::Arena::AllocateArray<Tilemap::ETileType>(Arena, TileWorld.ChunkDimension.x * TileWorld.ChunkDimension.y);
+			}
 
-		if (Chunk)
 			SetTileValue(TileWorld, *Chunk, GetTileCoordinate(TilePos), Value);
+		}
 	}
 
 	inline auto IsTilemapPointEmpty(const FWorld& TileWorld, const FTilemapPosition& Position) -> bool
 	{
-		return GetTileValue(TileWorld, Position.Tile) == 0;
+		return GetTileValue(TileWorld, Position.Tile) == ETileType::Empty;
 	}
 
 	inline auto RecalculateTilemapPosition(const FWorld& TileWorld, const FTilemapPosition& Position) -> FTilemapPosition
