@@ -3,7 +3,8 @@
 		"baseIncludePaths": [
 			"${workspaceFolder}/Engine/Source",
 			"${workspaceFolder}/ThirdParty/entt/src",
-			"${workspaceFolder}/ThirdParty/glm"
+			"${workspaceFolder}/ThirdParty/glm",
+			"${workspaceFolder}/ThirdParty/stb"
 		],
 		"baseDebugDefines": [
 			"GLM_FORCE_INTRINSICS",

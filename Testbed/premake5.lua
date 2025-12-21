@@ -14,6 +14,7 @@ project "Testbed"
 	externalincludedirs {
 		"%{wks.location}/ThirdParty/entt/src",
 		"%{wks.location}/ThirdParty/glm",
+		"%{wks.location}/ThirdParty/stb",
 		"%{wks.location}/Engine/Source",
 	}
 

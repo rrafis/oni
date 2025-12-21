@@ -4,6 +4,12 @@
 #include "Memory.h"
 #include "Tilemap.cpp"
 
+#include <filesystem>
+#include <iostream>
+
+#define STB_IMAGE_IMPLEMENTATION
+#include <stb_image.h>
+
 using namespace re;
 
 struct FWorld
@@ -13,6 +19,13 @@ struct FWorld
 	glm::vec2 Padding;		// Padding for drawing
 	f32 TileWidthInPixels;
 	f32 PixelsPerMeter;
+};
+
+struct FImage
+{
+	u32 Width, Height;
+	u8 Channels;
+	u32* Pixels;
 };
 
 struct FGameState
@@ -27,9 +40,64 @@ struct FGameState
 	Tilemap::FTilemapPosition PlayerPosition;
 	glm::vec2 PlayerSize;
 	glm::vec2 PlayerSpeed;
+
+	FImage Background;
+	FImage Player;
 };
 
 static FGameSurfaceDesc Props;
+
+constexpr auto ContentPath = "Content";
+
+inline u8 SRGBToUnorm8(u8 c)
+{
+	float cs = c / 255.0f;
+	if (cs <= 0.04045f)
+		cs = cs / 12.92f;
+	else
+		cs = std::pow((cs + 0.055f) / 1.055f, 2.4f);
+	cs = std::fmax(0.0f, std::fmin(1.0f, cs));
+	return static_cast<u8>(std::round(cs * 255.0f));
+}
+
+auto LoadImage(FImage& Image, const char* path) -> i32
+{
+	auto LoadPath = std::filesystem::path(ContentPath) / path;
+
+	stbi_set_flip_vertically_on_load(false);
+
+	int width, height, channels;
+	unsigned char* data = stbi_load(LoadPath.c_str(), &width, &height, &channels, 4);
+	channels = 4;
+
+	if (data == nullptr)
+	{
+		std::cerr << "Failed to load image!" << std::endl;
+		return -1;
+	}
+
+	auto size = width * height; // * channels;
+
+	Image.Width = width;
+	Image.Height = height;
+	Image.Channels = channels;
+	u32* Pixel = Image.Pixels;
+	for (u32 index = 0; index < size * channels; index += 4)
+	{
+		u8 r = SRGBToUnorm8(data[index + 0]);
+		u8 g = SRGBToUnorm8(data[index + 1]);
+		u8 b = SRGBToUnorm8(data[index + 2]);
+		u8 a = SRGBToUnorm8(data[index + 3]);
+		*Pixel++ = a << 24 | r << 16 | g << 8 | b << 0;
+	}
+
+	std::cout << "Image loaded: " << width << "x" << height << " with " << channels << " channels." << std::endl;
+
+	// Free memory when done
+	stbi_image_free(data);
+
+	return 0;
+}
 
 RE_API auto GameGetSurfaceDesc() -> FGameSurfaceDesc*
 {
@@ -71,11 +139,11 @@ RE_API auto GameInitialize(FGameMemory& Memory) -> void
 	Tilemap.Chunks =
 		Memory::Arena::AllocateArray<Tilemap::FChunk>(State.WorldArena, Tilemap.WorldDimension.x * Tilemap.WorldDimension.y * Tilemap.WorldDimension.z);
 
-	World.TileWidthInPixels = 30;
+	World.TileWidthInPixels = 60;
 	World.PixelsPerMeter = World.TileWidthInPixels / Tilemap.TileWidthInMeter;
 
 	auto ScreenChunkDim = glm::uvec2(10, 10);
-	auto ScreenTileDim = glm::uvec2(41, 31);
+	auto ScreenTileDim = glm::uvec2(21, 15);
 	auto ScreenTileHalfDim = ScreenTileDim / glm::uvec2(2);
 	u32 ScreenZ = 0;
 	auto Screen = glm::uvec2(0);
@@ -130,6 +198,11 @@ RE_API auto GameInitialize(FGameMemory& Memory) -> void
 			Screen.y += 1;
 		}
 	}
+
+	State.Background.Pixels = (u32*)Memory.TempStorage;
+	LoadImage(State.Background, "test/background.png");
+	State.Player.Pixels = (u32*)((u8*)Memory.TempStorage + State.Background.Width * State.Background.Height * State.Background.Channels);
+	LoadImage(State.Player, "test/link.png");
 }
 
 auto DrawRect(FOffscreenBuffer& Buffer, glm::vec2 InMin, glm::vec2 InMax, glm::vec3 InColor) -> void
@@ -158,28 +231,42 @@ auto DrawRect(FOffscreenBuffer& Buffer, glm::vec2 InMin, glm::vec2 InMax, glm::v
 	}
 }
 
-auto DrawUVGradient(FOffscreenBuffer& Buffer, FGameState& State, FInputGamepad& Gamepad, f32 DeltaTime)
+auto DrawImage(FOffscreenBuffer& Buffer, glm::vec2 InMin, glm::vec2 InMax, const FImage& Image) -> void
 {
-	u32 Width = Buffer.Width;
-	u32 Height = Buffer.Height;
-	u32 Pitch = Width * Buffer.BytesPerPixel;
-	u8* Row = Buffer.Backbuffer;
+	// TODO(Rafis): assert on (Min.x >= Max.x || Min.y >= Max.y)
 
-	State.xOffset += Gamepad.GamepadThumbstickLeft.X * State.OffsetSpeed * DeltaTime;
-	State.yOffset += Gamepad.GamepadThumbstickLeft.Y * State.OffsetSpeed * DeltaTime;
+	glm::ivec2 Min = glm::round(InMin);
+	glm::ivec2 Max = glm::round(InMax);
 
-	for (u32 Y = 0; Y < Height; ++Y)
+	Min = glm::clamp(Min, glm::ivec2(0), glm::ivec2(Buffer.Width, Buffer.Height));
+	Max = glm::clamp(Max, glm::ivec2(0), glm::ivec2(Buffer.Width, Buffer.Height));
+
+	u32 Pitch = Buffer.Width * Buffer.BytesPerPixel;
+	u8* Row = Buffer.Backbuffer + Min.x * Buffer.BytesPerPixel + Min.y * Pitch;
+
+	for (u32 Y = 0; Y < Image.Height && Y < Buffer.Height; ++Y)
 	{
 		u32* Pixel = (u32*)Row;
-
-		for (u32 X = 0; X < Width; ++X)
+		for (u32 X = 0; X < Image.Width && X < Buffer.Width; ++X)
 		{
-			u8 C1 = glm::abs(X + State.xOffset);
-			u8 C2 = glm::abs(Y + State.yOffset);
-
-			*Pixel++ = ((C2 << 16) | C1);
+			u32 Color = Image.Pixels[Y * Image.Width + X];
+			u8 alpha = Color >> 24 & 0xFF;
+			if (alpha != 0)
+			{
+				if (alpha == 255)
+				{
+					*Pixel = Color;
+				}
+				else
+				{
+					auto DestColor = glm::vec3(Color >> 16 & 0xFF, Color >> 8 & 0xFF, Color >> 0 & 0xFF);
+					auto SrcColor = glm::vec3(*Pixel >> 16 & 0xFF, *Pixel >> 8 & 0xFF, *Pixel >> 0 & 0xFF);
+					auto Result = glm::u8vec3(glm::mix(SrcColor, DestColor, alpha / 255.f));
+					*Pixel = Result.r << 16 | Result.g << 8 | Result.b << 0;
+				}
+			}
+			Pixel++;
 		}
-
 		Row += Pitch;
 	}
 }
@@ -258,7 +345,9 @@ RE_API auto GameUpdateAndRender(FGameMemory& Memory, f32 DeltaTime, FOffscreenBu
 	}
 
 	// Clear screen
-	DrawRect(Buffer, { 0.0f, 0.0f }, { Buffer.Width, Buffer.Height }, { 0.08f, 0.17f, 0.85f });
+	DrawRect(Buffer, glm::vec2{ 0.0f, 0.0f }, glm::vec2{ Buffer.Width, Buffer.Height }, glm::vec3{ 0.08f, 0.17f, 0.85f });
+
+	DrawImage(Buffer, glm::vec2{ 0, 0 }, glm::vec2{ State.Background.Width, State.Background.Height }, State.Background);
 
 	i32 HalfTilesPerScreenHorizontal = (i32)(glm::floor(Buffer.Width / World.TileWidthInPixels) + 1) / 2;
 	i32 HalfTilesPerScreenVertical = (i32)(glm::floor(Buffer.Height / World.TileWidthInPixels) + 1) / 2;
@@ -349,6 +438,8 @@ RE_API auto GameUpdateAndRender(FGameMemory& Memory, f32 DeltaTime, FOffscreenBu
 #endif
 
 		DrawRect(Buffer, DrawPosition, DrawPosition + DrawSize, glm::vec3(0.65f, 0.08f, 0.15f));
+
+		DrawImage(Buffer, DrawPosition, DrawPosition + DrawSize, State.Player);
 	}
 
 	// Center of the screen

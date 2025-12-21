@@ -597,7 +597,8 @@ auto GameModuleChanged(FGameModule& GameModule) -> bool
 			_metalLayer.contentsScale = _window.backingScaleFactor;
 		}
 
-		[self recreateBackbufferAndBackingStorage];
+		// NOTE: Backbuffer texture is alwasy fixed size
+		// [self recreateBackbufferAndBackingStorage];
 	}
 }
 
