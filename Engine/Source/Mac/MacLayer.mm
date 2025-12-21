@@ -167,6 +167,8 @@ auto GameModuleChanged(FGameModule& GameModule) -> bool
 	// Creaet and Add display link to the run loop to have an entry point for the application
 	[self createMetalDisplayLink];
 	[_metalDisplayLink addToRunLoop:[NSRunLoop currentRunLoop] forMode:NSRunLoopCommonModes];
+
+	_lastTargetTimestamp = CACurrentMediaTime();
 }
 
 // NOTE: Update and Render handling
