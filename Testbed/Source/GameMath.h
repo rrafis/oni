@@ -33,3 +33,27 @@ GLM_FUNC_DECL GLM_CONSTEXPR bool operator<(glm::vec<2, T, Q> const& v1, glm::vec
 {
 	return v1.x < v2.x && v1.y < v2.y;
 }
+
+template <typename T, glm::qualifier Q>
+GLM_FUNC_DECL GLM_CONSTEXPR bool operator>=(glm::vec<3, T, Q> const& v1, glm::vec<3, T, Q> const& v2)
+{
+	return v1.x >= v2.x && v1.y >= v2.y && v1.z >= v2.z;
+}
+
+template <typename T, glm::qualifier Q>
+GLM_FUNC_DECL GLM_CONSTEXPR bool operator>(glm::vec<3, T, Q> const& v1, glm::vec<3, T, Q> const& v2)
+{
+	return v1.x > v2.x && v1.y > v2.y && v1.z > v2.z;
+}
+
+template <typename T, glm::qualifier Q>
+GLM_FUNC_DECL GLM_CONSTEXPR bool operator<=(glm::vec<3, T, Q> const& v1, glm::vec<3, T, Q> const& v2)
+{
+	return v1.x <= v2.x && v1.y <= v2.y && v1.z <= v2.z;
+}
+
+template <typename T, glm::qualifier Q>
+GLM_FUNC_DECL GLM_CONSTEXPR bool operator<(glm::vec<3, T, Q> const& v1, glm::vec<3, T, Q> const& v2)
+{
+	return v1.x < v2.x && v1.y < v2.y && v1.z < v2.z;
+}

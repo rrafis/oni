@@ -6,8 +6,8 @@
 
 namespace re::Tilemap
 {
-	using FTilePosition = glm::uvec2;
-	using FChunkCoordinate = glm::uvec2;
+	using FTilePosition = glm::uvec3;
+	using FChunkCoordinate = glm::uvec3;
 	using FTileCoordinate = glm::uvec2;
 
 	struct FTilemapPosition
@@ -21,6 +21,8 @@ namespace re::Tilemap
 		Uninitialized = 0,
 		Empty = 1,
 		Wall = 2,
+		StairUp = 3,
+		StairDown = 4,
 
 		Invalid = UINT32_MAX
 	};
@@ -33,7 +35,7 @@ namespace re::Tilemap
 	struct FWorld
 	{
 		FChunk* Chunks;
-		glm::uvec2 WorldDimension;
+		glm::uvec3 WorldDimension;
 		glm::uvec2 ChunkDimension;
 		f32 TileWidthInMeter;
 	};

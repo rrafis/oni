@@ -10,7 +10,7 @@ namespace re::Tilemap
 
 	inline auto GetChunkCoordinate(const FTilePosition& Tile) -> FChunkCoordinate
 	{
-		return FChunkCoordinate{ Tile.x >> ChunkShift, Tile.y >> ChunkShift };
+		return FChunkCoordinate{ Tile.x >> ChunkShift, Tile.y >> ChunkShift, Tile.z };
 	}
 
 	inline auto GetTileCoordinate(const FTilePosition& Tile) -> FTileCoordinate
@@ -22,7 +22,8 @@ namespace re::Tilemap
 	{
 		if (ChunkCoord >= FChunkCoordinate(0) && ChunkCoord < TileWorld.WorldDimension)
 		{
-			return &TileWorld.Chunks[ChunkCoord.y * TileWorld.WorldDimension.x + ChunkCoord.x];
+			return &TileWorld.Chunks[ChunkCoord.z * TileWorld.WorldDimension.y * TileWorld.WorldDimension.x + ChunkCoord.y * TileWorld.WorldDimension.x
+				+ ChunkCoord.x];
 		}
 
 		return nullptr;
@@ -72,14 +73,20 @@ namespace re::Tilemap
 
 	inline auto IsTilemapPointEmpty(const FWorld& TileWorld, const FTilemapPosition& Position) -> bool
 	{
-		return GetTileValue(TileWorld, Position.Tile) == ETileType::Empty;
+		auto TileID = GetTileValue(TileWorld, Position.Tile);
+		return TileID == ETileType::Empty || TileID == ETileType::StairUp || TileID == ETileType::StairDown;
+	}
+
+	inline auto OnSameTile(const FWorld& TileWorld, const FTilemapPosition& Lhs, const FTilemapPosition& Rhs) -> bool
+	{
+		return GetTileValue(TileWorld, Lhs.Tile) == GetTileValue(TileWorld, Rhs.Tile);
 	}
 
 	inline auto RecalculateTilemapPosition(const FWorld& TileWorld, const FTilemapPosition& Position) -> FTilemapPosition
 	{
 		FTilemapPosition NewPosition = Position;
 		auto Offset = glm::ivec2(glm::round(Position.Local / (TileWorld.TileWidthInMeter)));
-		NewPosition.Tile += Offset;
+		NewPosition.Tile += FTilePosition(Offset, 0);
 		NewPosition.Local -= glm::vec2(Offset) * TileWorld.TileWidthInMeter;
 
 		return NewPosition;

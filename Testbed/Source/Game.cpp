@@ -50,10 +50,10 @@ RE_API auto GameInitialize(FGameMemory& Memory) -> void
 	State.yOffset = 0;
 	State.OffsetSpeed = 2 * 255.f;
 
-	State.PlayerSpeed = glm::vec2{ 6.0f };
+	State.PlayerSpeed = glm::vec2{ 36.0f };
 	State.PlayerSize = glm::vec2{ 1.0f };
 
-	State.PlayerPosition.Tile = glm::uvec2(10, 7);
+	State.PlayerPosition.Tile = glm::uvec3(10, 7, 0);
 	State.PlayerPosition.Local = glm::vec2(0.0f, 0.0f);
 
 	usize WorldArenaSize = Memory.PermanentStorageSize - sizeof(FGameState);
@@ -65,54 +65,63 @@ RE_API auto GameInitialize(FGameMemory& Memory) -> void
 	World.Tilemap = Memory::Arena::Allocate<Tilemap::FWorld>(State.WorldArena);
 	auto& Tilemap = *World.Tilemap;
 
-	Tilemap.WorldDimension = { 16 * 16, 16 * 16 };
+	Tilemap.WorldDimension = { 16 * 16, 16 * 16, 2 };
 	Tilemap.ChunkDimension = { 16, 16 };
 	Tilemap.TileWidthInMeter = 1.5f;
-	Tilemap.Chunks = Memory::Arena::AllocateArray<Tilemap::FChunk>(State.WorldArena, Tilemap.WorldDimension.x * Tilemap.WorldDimension.y);
+	Tilemap.Chunks =
+		Memory::Arena::AllocateArray<Tilemap::FChunk>(State.WorldArena, Tilemap.WorldDimension.x * Tilemap.WorldDimension.y * Tilemap.WorldDimension.z);
 
-	World.TileWidthInPixels = 60;
+	World.TileWidthInPixels = 30;
 	World.PixelsPerMeter = World.TileWidthInPixels / Tilemap.TileWidthInMeter;
 
 	auto ScreenChunkDim = glm::uvec2(10, 10);
-	auto ScreenTileDim = glm::uvec2(21, 15);
+	auto ScreenTileDim = glm::uvec2(41, 31);
 	auto ScreenTileHalfDim = ScreenTileDim / glm::uvec2(2);
+	u32 ScreenZ = 0;
 	auto Screen = glm::uvec2(0);
 	for (u32 ScreenIndex = 0; ScreenIndex < 100; ++ScreenIndex)
 	{
+		u32 RandomValue = rand() % 3;
 		for (u32 TileY = 0; TileY < ScreenTileDim.y; ++TileY)
 		{
 			for (u32 TileX = 0; TileX < ScreenTileDim.x; ++TileX)
 			{
 				Tilemap::ETileType TileValue = Tilemap::ETileType::Empty;
-				if (TileX == 0 || TileX == ScreenTileDim.x - 1)
-				{
-					if (TileY != ScreenTileHalfDim.y && TileY != ScreenTileHalfDim.y + 1 && TileY != ScreenTileHalfDim.y - 1)
-					{
-						TileValue = Tilemap::ETileType::Wall;
-					}
-					else
-					{
-						TileValue = Tilemap::ETileType::Empty;
-					}
-				}
 				if (TileY == 0 || TileY == ScreenTileDim.y - 1)
 				{
-					if (TileX != ScreenTileHalfDim.x && TileX != ScreenTileHalfDim.x + 1 && TileX != ScreenTileHalfDim.x - 1)
-					{
-						TileValue = Tilemap::ETileType::Wall;
-					}
-					else
+					TileValue = Tilemap::ETileType::Wall;
+					if (TileX >= ScreenTileHalfDim.x - 1 && TileX <= ScreenTileHalfDim.x + 1)
 					{
 						TileValue = Tilemap::ETileType::Empty;
 					}
 				}
 
-				auto TilePosition = Tilemap::FTilePosition(Screen * ScreenTileDim + glm::uvec2(TileX, TileY));
+				if (TileX == 0 || TileX == ScreenTileDim.x - 1)
+				{
+					TileValue = Tilemap::ETileType::Wall;
+					if (TileY >= ScreenTileHalfDim.y - 1 && TileY <= ScreenTileHalfDim.y + 1)
+					{
+						TileValue = Tilemap::ETileType::Empty;
+					}
+				}
+
+				if (RandomValue == 2)
+				{
+					if (TileX == 10 && TileY == 10)
+					{
+						TileValue = ScreenZ == 0 ? Tilemap::ETileType::StairDown : Tilemap::ETileType::StairUp;
+					}
+				}
+
+				auto TilePosition = Tilemap::FTilePosition(Screen * ScreenTileDim + glm::uvec2(TileX, TileY), ScreenZ);
 				Tilemap::SetTileValue(State.WorldArena, Tilemap, TilePosition, TileValue);
 			}
 		}
-		u32 RandomValue = rand() % 2;
-		if (RandomValue == 0)
+		if (RandomValue == 2)
+		{
+			ScreenZ = (ScreenZ + 1) % Tilemap.WorldDimension.z;
+		}
+		else if (RandomValue == 0)
 		{
 			Screen.x += 1;
 		}
@@ -184,9 +193,13 @@ RE_API auto GameUpdateAndRender(FGameMemory& Memory, f32 DeltaTime, FOffscreenBu
 	World.DrawPosition = glm::vec2(0.5f * Buffer.Width, 0.5f * Buffer.Height);
 	World.Padding = glm::vec2(1.f);
 
-	if (Gamepad.GamepadOption.bPressed)
+	static bool bOptionPressed = false;
+	static bool bOptionWasPressed = false;
+	bOptionWasPressed = bOptionPressed && Gamepad.GamepadOption.bPressed;
+	bOptionPressed = Gamepad.GamepadOption.bPressed;
+	if (bOptionPressed && !bOptionWasPressed)
 	{
-		State.PlayerPosition.Tile = glm::uvec2(10, 7);
+		State.PlayerPosition.Tile = glm::uvec3(20, 15, State.PlayerPosition.Tile.z);
 		State.PlayerPosition.Local = glm::vec2(0.0f, 0.0f);
 	}
 
@@ -229,6 +242,18 @@ RE_API auto GameUpdateAndRender(FGameMemory& Memory, f32 DeltaTime, FOffscreenBu
 	if (Tilemap::IsTilemapPointEmpty(Tilemap, NewPlayerPos) && Tilemap::IsTilemapPointEmpty(Tilemap, NewPlayerPosLeft)
 		&& Tilemap::IsTilemapPointEmpty(Tilemap, NewPlayerPosRight))
 	{
+		if (!Tilemap::OnSameTile(Tilemap, State.PlayerPosition, NewPlayerPos))
+		{
+			auto TileID = Tilemap::GetTileValue(Tilemap, NewPlayerPos.Tile);
+			if (TileID == Tilemap::ETileType::StairDown)
+			{
+				NewPlayerPos.Tile.z = 1;
+			}
+			else if (TileID == Tilemap::ETileType::StairUp)
+			{
+				NewPlayerPos.Tile.z = 0;
+			}
+		}
 		State.PlayerPosition = NewPlayerPos;
 	}
 
@@ -243,7 +268,7 @@ RE_API auto GameUpdateAndRender(FGameMemory& Memory, f32 DeltaTime, FOffscreenBu
 	{
 		for (i32 RelColumn = -HalfTilesPerScreenHorizontal; RelColumn <= HalfTilesPerScreenHorizontal; ++RelColumn)
 		{
-			auto Tile = Tilemap::FTilePosition(glm::ivec2(State.PlayerPosition.Tile) + glm::ivec2{ RelColumn, RelRow });
+			auto Tile = Tilemap::FTilePosition(glm::ivec2(State.PlayerPosition.Tile) + glm::ivec2{ RelColumn, RelRow }, State.PlayerPosition.Tile.z);
 			auto TileID = Tilemap::GetTileValue(Tilemap, Tile);
 
 			if (TileID != Tilemap::ETileType::Invalid)
@@ -269,6 +294,16 @@ RE_API auto GameUpdateAndRender(FGameMemory& Memory, f32 DeltaTime, FOffscreenBu
 					case Tilemap::ETileType::Uninitialized:
 					{
 						Color = glm::vec3(0.5f);
+						break;
+					}
+					case Tilemap::ETileType::StairUp:
+					{
+						Color = glm::vec3(1, 1, 0);
+						break;
+					}
+					case Tilemap::ETileType::StairDown:
+					{
+						Color = glm::vec3(0, 1, 1);
 						break;
 					}
 					default:
