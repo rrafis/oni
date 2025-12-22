@@ -231,9 +231,10 @@ RE_API auto GameInitialize(FGameMemory& Memory) -> void
 		(u32*)((u8*)Memory.TempStorage + State.BackgroundTexture.Width * State.BackgroundTexture.Height * State.BackgroundTexture.Channels);
 	LoadImage(State.PlayerTexture, "test/link_atlas.png");
 
+	u32 Base = 740 * 2 + 1;
 	// Player Idle
 	{
-		glm::uvec2 BaseOffset = { 1, 21 };
+		glm::uvec2 BaseOffset = { Base, 21 };
 		glm::uvec2 BaseSize = { 24, 33 };
 		glm::uvec2 BasePivot = BaseSize / glm::uvec2(2);
 		auto BaseSprite = FSprite{ .Texture = &State.PlayerTexture, .Pivot = BasePivot };
@@ -247,7 +248,7 @@ RE_API auto GameInitialize(FGameMemory& Memory) -> void
 
 	// Player move down
 	{
-		glm::uvec2 BaseOffset = { 325, 21 };
+		glm::uvec2 BaseOffset = { 324 + Base, 21 };
 		glm::uvec2 BaseSize = { 23, 35 };
 		glm::uvec2 BasePivot = BaseSize / glm::uvec2(2);
 		auto BaseSprite = FSprite{ .Texture = &State.PlayerTexture, .Pivot = BasePivot };
@@ -261,7 +262,7 @@ RE_API auto GameInitialize(FGameMemory& Memory) -> void
 
 	// Player move right
 	{
-		glm::uvec2 BaseOffset = { 325, 21 + 1 + 35 };
+		glm::uvec2 BaseOffset = { 324 + Base, 21 + 1 + 35 };
 		glm::uvec2 BaseSize = { 24, 33 };
 		glm::uvec2 BasePivot = BaseSize / glm::uvec2(2);
 		auto BaseSprite = FSprite{ .Texture = &State.PlayerTexture, .Pivot = BasePivot };
@@ -275,7 +276,7 @@ RE_API auto GameInitialize(FGameMemory& Memory) -> void
 
 	// Player move left
 	{
-		glm::uvec2 BaseOffset = { 325, 21 + 1 + 35 };
+		glm::uvec2 BaseOffset = { 324 + Base, 21 + 1 + 35 };
 		glm::uvec2 BaseSize = { 24, 33 };
 		glm::uvec2 BasePivot = BaseSize / glm::uvec2(2);
 		auto BaseSprite = FSprite{ .Texture = &State.PlayerTexture, .Pivot = BasePivot };
@@ -291,7 +292,7 @@ RE_API auto GameInitialize(FGameMemory& Memory) -> void
 
 	// Player move up
 	{
-		glm::uvec2 BaseOffset = { 325, 21 + 1 + 35 + 1 + 33 };
+		glm::uvec2 BaseOffset = { 324 + Base, 21 + 1 + 35 + 1 + 33 };
 		glm::uvec2 BaseSize = { 26, 36 };
 		glm::uvec2 BasePivot = BaseSize / glm::uvec2(2);
 		auto BaseSprite = FSprite{ .Texture = &State.PlayerTexture, .Pivot = BasePivot };
@@ -357,11 +358,14 @@ auto DrawImage(FOffscreenBuffer& Buffer, glm::vec2 InMin, glm::vec2 InMax, const
 
 	u32 Pitch = Buffer.Width * Buffer.BytesPerPixel;
 	u8* Row = Buffer.Backbuffer + Min.x * Buffer.BytesPerPixel + Min.y * Pitch;
+	u32 BufferX = Min.x;
+	u32 BufferY = Min.y;
 
-	for (u32 Y = Sprite.Min.y + OffsetSource.y; Y < Sprite.Max.y && Y < Sprite.Texture->Height && Y < Buffer.Height; ++Y)
+	for (u32 Y = Sprite.Min.y + OffsetSource.y; Y < Sprite.Max.y && Y < Sprite.Texture->Height && BufferY < Max.y; ++Y)
 	{
 		u32* Pixel = (u32*)Row;
-		for (u32 X = SpriteXMin + OffsetSource.x; X < SpriteXMax && X < Sprite.Texture->Width && X < Buffer.Width; ++X)
+		BufferX = Min.x;
+		for (u32 X = SpriteXMin + OffsetSource.x; X < SpriteXMax && X < Sprite.Texture->Width && BufferX < Max.x; ++X)
 		{
 			u32 Color = Sprite.Texture->Pixels[Y * Sprite.Texture->Width + X];
 
@@ -393,8 +397,10 @@ auto DrawImage(FOffscreenBuffer& Buffer, glm::vec2 InMin, glm::vec2 InMax, const
 				}
 			}
 			Pixel++;
+			BufferX++;
 		}
 		Row += Pitch;
+		BufferY++;
 	}
 }
 
