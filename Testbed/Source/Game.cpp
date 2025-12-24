@@ -50,8 +50,10 @@ struct FGameState
 
 	Tilemap::FTilemapPosition CameraPosition;
 	Tilemap::FTilemapPosition PlayerPosition;
+	f32 PlayerAcceleration = 2.0f;
+	f32 PlayerFrictionCoeficient;
 	glm::vec2 PlayerSize;
-	glm::vec2 PlayerSpeed;
+	glm::vec2 PlayerVelocity;
 
 	FImage BackgroundTexture;
 	FImage PlayerTexture;
@@ -214,7 +216,9 @@ RE_API auto GameInitialize(FGameMemory& Memory) -> void
 		}
 	}
 
-	State.PlayerSpeed = glm::vec2{ 6.0f };
+	State.PlayerAcceleration = 150.0f;
+	State.PlayerFrictionCoeficient = 20.f;
+	State.PlayerVelocity = glm::vec2{ 0.0f };
 	State.PlayerSize = glm::vec2{ 1.0f };
 
 	State.PlayerPosition.Tile = glm::uvec3(9, 3, 0);
@@ -419,64 +423,82 @@ RE_API auto GameUpdateAndRender(FGameMemory& Memory, f32 DeltaTime, FOffscreenBu
 	bOptionPressed = Gamepad.GamepadOption.bPressed;
 	if (bOptionPressed && !bOptionWasPressed)
 	{
-		State.PlayerPosition.Tile = glm::uvec3(9, 3, State.PlayerPosition.Tile.z);
-		State.PlayerPosition.Local = glm::vec2(0.0f, 0.0f);
+		// State.PlayerPosition.Tile = glm::uvec3(9, 3, State.PlayerPosition.Tile.z);
+		// State.PlayerPosition.Local = glm::vec2(0.0f, 0.0f);
+		// State.PlayerAcceleration = (State.PlayerAcceleration == 4.0f) ? 8.0f : 4.0f;
+		// State.PlayerAcceleration += 1.f;
 	}
 
-	State.PlayerSpriteIdleIndex += glm::length(State.PlayerSpeed) * DeltaTime;
+	State.PlayerSpriteIdleIndex += 4 * glm::length(State.PlayerVelocity) * DeltaTime;
 
-	auto LeftStickDirection = glm::vec2(Gamepad.GamepadThumbstickLeft.X, Gamepad.GamepadThumbstickLeft.Y);
-	if (Gamepad.GamepadDpadUp.bPressed)
-	{
-		LeftStickDirection.y = 1.0f;
-	}
-	if (Gamepad.GamepadDpadDown.bPressed)
-	{
-		LeftStickDirection.y = -1.0f;
-	}
-	if (Gamepad.GamepadDpadRight.bPressed)
-	{
-		LeftStickDirection.x = 1.0f;
-	}
-	if (Gamepad.GamepadDpadLeft.bPressed)
-	{
-		LeftStickDirection.x = -1.0f;
-	}
+	auto OldPlayerPos = State.PlayerPosition;
 
-	if (LeftStickDirection.x != 0 || LeftStickDirection.y != 0.0)
+	// Calculate new player position
 	{
-		LeftStickDirection = glm::normalize(LeftStickDirection);
-	}
-	auto CurrentSpeedInMeters = (LeftStickDirection * State.PlayerSpeed * DeltaTime);
-
-	auto NewPlayerPos = State.PlayerPosition;
-	auto NewPlayerPosLeft = State.PlayerPosition;
-	auto NewPlayerPosRight = State.PlayerPosition;
-
-	NewPlayerPos.Local += CurrentSpeedInMeters;
-	NewPlayerPosLeft.Local += CurrentSpeedInMeters + State.PlayerSize * glm::vec2(-0.5f, -0.5f);
-	NewPlayerPosRight.Local += CurrentSpeedInMeters + State.PlayerSize * glm::vec2(0.5f, -0.5f);
-
-	NewPlayerPos = Tilemap::RecalculateTilemapPosition(Tilemap, NewPlayerPos);
-	NewPlayerPosLeft = Tilemap::RecalculateTilemapPosition(Tilemap, NewPlayerPosLeft);
-	NewPlayerPosRight = Tilemap::RecalculateTilemapPosition(Tilemap, NewPlayerPosRight);
-
-	if (Tilemap::IsTilemapPointEmpty(Tilemap, NewPlayerPos) && Tilemap::IsTilemapPointEmpty(Tilemap, NewPlayerPosLeft)
-		&& Tilemap::IsTilemapPointEmpty(Tilemap, NewPlayerPosRight))
-	{
-		if (!Tilemap::OnSameTile(Tilemap, State.PlayerPosition, NewPlayerPos))
+		auto LeftStickAcceleration = glm::vec2(Gamepad.GamepadThumbstickLeft.X, Gamepad.GamepadThumbstickLeft.Y);
+		if (Gamepad.GamepadDpadUp.bPressed)
 		{
-			auto TileID = Tilemap::GetTileValue(Tilemap, NewPlayerPos.Tile);
+			LeftStickAcceleration.y = 1.0f;
+		}
+		if (Gamepad.GamepadDpadDown.bPressed)
+		{
+			LeftStickAcceleration.y = -1.0f;
+		}
+		if (Gamepad.GamepadDpadRight.bPressed)
+		{
+			LeftStickAcceleration.x = 1.0f;
+		}
+		if (Gamepad.GamepadDpadLeft.bPressed)
+		{
+			LeftStickAcceleration.x = -1.0f;
+		}
+
+		if (LeftStickAcceleration.x != 0 || LeftStickAcceleration.y != 0.0)
+		{
+			LeftStickAcceleration = glm::normalize(LeftStickAcceleration);
+		}
+		LeftStickAcceleration *= State.PlayerAcceleration;
+
+		glm::vec2 frictionAcceleration = State.PlayerFrictionCoeficient * (-State.PlayerVelocity);
+		glm::vec2 Acceleration = LeftStickAcceleration + frictionAcceleration;
+
+		auto NewPlayerPosition = 0.5f * Acceleration * DeltaTime * DeltaTime + State.PlayerVelocity * DeltaTime + State.PlayerPosition.Local;
+		State.PlayerVelocity = Acceleration * DeltaTime + State.PlayerVelocity;
+
+		auto NewPlayerPos = State.PlayerPosition;
+		auto NewPlayerPosLeft = State.PlayerPosition;
+		auto NewPlayerPosRight = State.PlayerPosition;
+
+		NewPlayerPos.Local = NewPlayerPosition;
+		NewPlayerPosLeft.Local += NewPlayerPosition + State.PlayerSize * glm::vec2(-0.5f, -0.5f);
+		NewPlayerPosRight.Local += NewPlayerPosition + State.PlayerSize * glm::vec2(0.5f, -0.5f);
+
+		NewPlayerPos = Tilemap::RecalculateTilemapPosition(Tilemap, NewPlayerPos);
+		NewPlayerPosLeft = Tilemap::RecalculateTilemapPosition(Tilemap, NewPlayerPosLeft);
+		NewPlayerPosRight = Tilemap::RecalculateTilemapPosition(Tilemap, NewPlayerPosRight);
+
+		if (Tilemap::IsTilemapPointEmpty(Tilemap, NewPlayerPos) && Tilemap::IsTilemapPointEmpty(Tilemap, NewPlayerPosLeft)
+			&& Tilemap::IsTilemapPointEmpty(Tilemap, NewPlayerPosRight))
+		{
+			State.PlayerPosition = NewPlayerPos;
+		}
+	}
+
+	// Calculate Z layer and camera position
+	{
+		if (!Tilemap::OnSameTile(Tilemap, OldPlayerPos, State.PlayerPosition))
+		{
+			auto TileID = Tilemap::GetTileValue(Tilemap, State.PlayerPosition.Tile);
 			if (TileID == Tilemap::ETileType::StairDown)
 			{
-				NewPlayerPos.Tile.z = 1;
+				State.PlayerPosition.Tile.z = 1;
 			}
 			else if (TileID == Tilemap::ETileType::StairUp)
 			{
-				NewPlayerPos.Tile.z = 0;
+				State.PlayerPosition.Tile.z = 0;
 			}
 		}
-		State.PlayerPosition = NewPlayerPos;
+
 		State.CameraPosition.Tile = Tilemap::FTilePosition(
 			(glm::uvec2(State.PlayerPosition.Tile) / World.ScreenTileDim) * World.ScreenTileDim + World.ScreenTileDimHalf, State.PlayerPosition.Tile.z);
 	}
@@ -582,22 +604,22 @@ RE_API auto GameUpdateAndRender(FGameMemory& Memory, f32 DeltaTime, FOffscreenBu
 		DrawRect(Buffer, DrawPosition - DrawSize * glm::vec2(0.5f), DrawPosition + DrawSize * glm::vec2(0.5f), glm::vec3(0.65f, 0.08f, 0.15f));
 #endif
 		auto index = (u32)(glm::round(State.PlayerSpriteIdleIndex)) % State.PlayerSpriteIdle.size();
-		if (LeftStickDirection.y < 0)
+		if (State.PlayerVelocity.y < -0.1f)
 		{
 			index = (u32)(glm::round(State.PlayerSpriteIdleIndex)) % State.PlayerSpriteMoveDown.size();
 			DrawImage(Buffer, DrawPosition, DrawPosition + DrawSize, State.PlayerSpriteMoveDown[index]);
 		}
-		else if (LeftStickDirection.y > 0)
+		else if (State.PlayerVelocity.y > 0.1f)
 		{
 			index = (u32)(glm::round(State.PlayerSpriteIdleIndex)) % State.PlayerSpriteMoveUp.size();
 			DrawImage(Buffer, DrawPosition, DrawPosition + DrawSize, State.PlayerSpriteMoveUp[index]);
 		}
-		else if (LeftStickDirection.x > 0)
+		else if (State.PlayerVelocity.x > 0.1f)
 		{
 			index = (u32)(glm::round(State.PlayerSpriteIdleIndex)) % State.PlayerSpriteMoveRight.size();
 			DrawImage(Buffer, DrawPosition, DrawPosition + DrawSize, State.PlayerSpriteMoveRight[index]);
 		}
-		else if (LeftStickDirection.x < 0)
+		else if (State.PlayerVelocity.x < -0.1f)
 		{
 			index = (u32)(glm::round(State.PlayerSpriteIdleIndex)) % State.PlayerSpriteMoveLeft.size();
 			DrawImage(Buffer, DrawPosition, DrawPosition + DrawSize, State.PlayerSpriteMoveLeft[index]);
