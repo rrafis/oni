@@ -87,6 +87,17 @@ namespace re::Tilemap
 		return GetTileValue(TileWorld, Lhs.Tile) == GetTileValue(TileWorld, Rhs.Tile);
 	}
 
+	inline auto Offset(const FWorld& TileWorld, const FTilemapPosition& Pos, const glm::vec2& Offset)
+	{
+		FTilemapPosition NewPosition = Pos;
+		NewPosition.Local += Offset;
+		auto TempOffset = glm::ivec2(glm::round(NewPosition.Local / (TileWorld.TileWidthInMeter)));
+		NewPosition.Tile += FTilePosition(TempOffset, 0);
+		NewPosition.Local -= glm::vec2(TempOffset) * TileWorld.TileWidthInMeter;
+
+		return NewPosition;
+	}
+
 	inline auto RecalculateTilemapPosition(const FWorld& TileWorld, const FTilemapPosition& Position) -> FTilemapPosition
 	{
 		FTilemapPosition NewPosition = Position;
@@ -99,7 +110,9 @@ namespace re::Tilemap
 
 	inline auto Subtract(const FWorld& TileWorld, const FTilemapPosition& Lhs, const FTilemapPosition& Rhs) -> glm::vec3
 	{
-		glm::vec2 DeltaXY(Lhs.Tile.x - Rhs.Tile.x, Lhs.Tile.y - Rhs.Tile.y);
+		glm::vec2 DeltaXY;
+		DeltaXY.x = (f32)Lhs.Tile.x - (f32)Rhs.Tile.x;
+		DeltaXY.y = (f32)Lhs.Tile.y - (f32)Rhs.Tile.y;
 		f32 DeltaZ = Lhs.Tile.z - Rhs.Tile.z;
 
 		glm::vec3 Diff(DeltaXY * TileWorld.TileWidthInMeter + (Lhs.Local - Rhs.Local), DeltaZ * TileWorld.TileWidthInMeter);
@@ -112,6 +125,7 @@ namespace re::Tilemap
 		Pos.Tile.x = X;
 		Pos.Tile.y = Y;
 		Pos.Tile.z = Z;
+		Pos.Local = glm::vec2(0.0f);
 		return Pos;
 	}
 
@@ -119,6 +133,7 @@ namespace re::Tilemap
 	{
 		FTilemapPosition Pos;
 		Pos.Tile = TilePos;
+		Pos.Local = glm::vec2(0.0f);
 		return Pos;
 	}
 } // namespace re::Tilemap

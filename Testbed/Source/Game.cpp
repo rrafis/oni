@@ -240,7 +240,7 @@ RE_API auto GameInitialize(FGameMemory& Memory) -> void
 
 	State.PlayerAcceleration = 150.0f;
 	State.PlayerFrictionCoeficient = 20.f;
-	State.PlayerSize = glm::vec2{ 1.0f };
+	State.PlayerSize = glm::vec2{ 0.65f, 0.9f };
 
 	AddPlayer(State);
 
@@ -428,6 +428,27 @@ auto DrawImage(FOffscreenBuffer& Buffer, glm::vec2 InMin, glm::vec2 InMax, const
 	}
 }
 
+auto TestWall(f32 WallX, f32 PlayerRelX, f32 PlayerRelY, f32 PlayerDeltaX, f32 PlayerDeltaY, f32& tMin, f32 MinY, f32 MaxY) -> bool
+{
+	f32 tEpsilon = 0.01f;
+	if (PlayerDeltaX != 0.0f)
+	{
+		f32 tResult = (WallX - PlayerRelX) / PlayerDeltaX;
+		f32 Y = PlayerRelY + tResult * PlayerDeltaY;
+		if (tResult >= 0.0f && tMin > tResult)
+		{
+			bool b1 = Y >= MinY;
+			bool b2 = Y <= MaxY;
+			if (Y >= MinY && Y <= MaxY)
+			{
+				tMin = glm::max(0.0f, tResult - tEpsilon);
+				return true;
+			}
+		}
+	}
+	return false;
+}
+
 auto PlayerMove(FGameState& State, FPlayerState& Player, const Tilemap::FWorld& Tilemap, const FInputGamepad& Gamepad, f32 DeltaTime) -> void
 {
 	auto OldPlayerPos = Player.Position;
@@ -461,21 +482,13 @@ auto PlayerMove(FGameState& State, FPlayerState& Player, const Tilemap::FWorld& 
 		glm::vec2 frictionAcceleration = State.PlayerFrictionCoeficient * (-Player.Velocity);
 		glm::vec2 Acceleration = LeftStickAcceleration + frictionAcceleration;
 
-#if 1
+#if 0
 		auto NewPlayerPositionDelta = 0.5f * Acceleration * DeltaTime * DeltaTime + Player.Velocity * DeltaTime;
 		Player.Velocity = Acceleration * DeltaTime + Player.Velocity;
 
-		auto NewPlayerPos = Player.Position;
-		auto NewPlayerPosLeft = Player.Position;
-		auto NewPlayerPosRight = Player.Position;
-
-		NewPlayerPos.Local += NewPlayerPositionDelta;
-		NewPlayerPosLeft.Local += NewPlayerPositionDelta + State.PlayerSize * glm::vec2(-0.5f, -0.5f);
-		NewPlayerPosRight.Local += NewPlayerPositionDelta + State.PlayerSize * glm::vec2(0.5f, -0.5f);
-
-		NewPlayerPos = Tilemap::RecalculateTilemapPosition(Tilemap, NewPlayerPos);
-		NewPlayerPosLeft = Tilemap::RecalculateTilemapPosition(Tilemap, NewPlayerPosLeft);
-		NewPlayerPosRight = Tilemap::RecalculateTilemapPosition(Tilemap, NewPlayerPosRight);
+		auto NewPlayerPos = Tilemap::Offset(Tilemap, Player.Position, NewPlayerPositionDelta);
+		auto NewPlayerPosLeft = Tilemap::Offset(Tilemap, Player.Position, NewPlayerPositionDelta + State.PlayerSize * glm::vec2(-0.5f, -0.5f));
+		auto NewPlayerPosRight = Tilemap::Offset(Tilemap, Player.Position, NewPlayerPositionDelta + State.PlayerSize * glm::vec2(0.5f, -0.5f));
 
 		if (Tilemap::IsTilemapPointEmpty(Tilemap, NewPlayerPos) && Tilemap::IsTilemapPointEmpty(Tilemap, NewPlayerPosLeft)
 			&& Tilemap::IsTilemapPointEmpty(Tilemap, NewPlayerPosRight))
@@ -483,39 +496,65 @@ auto PlayerMove(FGameState& State, FPlayerState& Player, const Tilemap::FWorld& 
 			Player.Position = NewPlayerPos;
 		}
 #else
-		auto NewPlayerPositionDelta = 0.5f * Acceleration * DeltaTime * DeltaTime + Player.Velocity * DeltaTime;
+		glm::vec2 PlayerDelta = 0.5f * Acceleration * DeltaTime * DeltaTime + Player.Velocity * DeltaTime;
 		Player.Velocity = Acceleration * DeltaTime + Player.Velocity;
 
-		auto NewPlayerPos = Player.Position;
-		NewPlayerPos.Local += NewPlayerPositionDelta;
-		NewPlayerPos = Tilemap::RecalculateTilemapPosition(Tilemap, NewPlayerPos);
+		auto NewPlayerPos = Tilemap::Offset(Tilemap, Player.Position, PlayerDelta);
 
 		u32 AbsTileZ = Player.Position.Tile.z;
-		glm::uvec2 MinTile(0, 0);
-		glm::uvec2 OnePastMaxTile(0, 0);
-		auto BestPlayerPosition = Player.Position;
-		auto BestDistance = glm::length(NewPlayerPositionDelta);
-		for (u32 AbsTileY = MinTile.y; AbsTileY != OnePastMaxTile.y; ++AbsTileY)
-		{
-			for (u32 AbsTileX = MinTile.x; AbsTileX != OnePastMaxTile.x; ++AbsTileX)
-			{
-				auto TestTile = Tilemap::CreateTilemapPosition(AbsTileX, AbsTileY, AbsTileZ);
-				auto TileID = Tilemap::GetTileValue(Tilemap, TestTile.Tile);
-				if (Tilemap::IsTileEmpty(TileID))
-				{
-					glm::vec2 MinCorner(-0.5f * Tilemap.TileWidthInMeter);
-					glm::vec2 MaxCorner(0.5f * Tilemap.TileWidthInMeter);
 
-					auto RelNewPlayerPosition = Tilemap::Subtract(Tilemap, TestTile, NewPlayerPos);
-					glm::vec2 TestPos = ClosestPointInRect(MinCorner, MaxCorner, RelNewPlayerPosition);
-					f32 TestDistance = ;
-					if (BestDistance > TestDistance)
+		glm::uvec2 EntityTile = glm::ceil(State.PlayerSize / Tilemap.TileWidthInMeter);
+		glm::uvec2 StartTile(glm::min(Player.Position.Tile.x, NewPlayerPos.Tile.x), glm::min(Player.Position.Tile.y, NewPlayerPos.Tile.y));
+		glm::uvec2 EndTile(glm::max(Player.Position.Tile.x, NewPlayerPos.Tile.x), glm::max(Player.Position.Tile.y, NewPlayerPos.Tile.y));
+		StartTile -= EntityTile;
+		EndTile += EntityTile;
+
+		glm::vec2 WallNormal(0.0f);
+		f32 tRemain = 1.0f;
+		for (u32 Iter = 0; Iter < 4 && tRemain > 0.0f; ++Iter)
+		{
+			f32 tMin = 1.0f;
+			u32 AbsTileY = StartTile.y;
+			for (u32 AbsTileY = StartTile.y; AbsTileY <= EndTile.y; ++AbsTileY)
+			{
+				for (u32 AbsTileX = StartTile.x; AbsTileX <= EndTile.x; ++AbsTileX)
+				{
+					auto TestTile = Tilemap::CreateTilemapPosition(AbsTileX, AbsTileY, AbsTileZ);
+					auto TileID = Tilemap::GetTileValue(Tilemap, TestTile.Tile);
+					if (!Tilemap::IsTileEmpty(TileID))
 					{
-						BestPlayerPosition = ;
-						BestDistance = ;
+						glm::vec2 Diameter = State.PlayerSize + Tilemap.TileWidthInMeter;
+						glm::vec2 MinCorner = -0.5f * Diameter;
+						glm::vec2 MaxCorner = 0.5f * Diameter;
+
+						auto RelPlayerPosition = Tilemap::Subtract(Tilemap, Player.Position, TestTile);
+						glm::vec2 Rel(RelPlayerPosition);
+
+						if (TestWall(MinCorner.x, Rel.x, Rel.y, PlayerDelta.x, PlayerDelta.y, tMin, MinCorner.y, MaxCorner.y))
+						{
+							WallNormal = { -1.0f, 0.0f };
+						}
+						if (TestWall(MaxCorner.x, Rel.x, Rel.y, PlayerDelta.x, PlayerDelta.y, tMin, MinCorner.y, MaxCorner.y))
+						{
+							WallNormal = { 1.0f, 0.0f };
+						}
+						if (TestWall(MinCorner.y, Rel.y, Rel.x, PlayerDelta.y, PlayerDelta.x, tMin, MinCorner.x, MaxCorner.x))
+						{
+							WallNormal = { 0.0f, -1.0f };
+						}
+						if (TestWall(MaxCorner.y, Rel.y, Rel.x, PlayerDelta.y, PlayerDelta.x, tMin, MinCorner.x, MaxCorner.x))
+						{
+							WallNormal = { 0.0f, 1.0f };
+						}
 					}
 				}
 			}
+
+			Player.Position = Tilemap::Offset(Tilemap, Player.Position, tMin * PlayerDelta);
+			Player.Velocity = Player.Velocity - 1.0f * Player.Velocity * WallNormal * WallNormal;
+			PlayerDelta = PlayerDelta - 1.0f * PlayerDelta * WallNormal * WallNormal;
+
+			tRemain -= tMin * tRemain;
 		}
 #endif
 	}
@@ -665,13 +704,14 @@ RE_API auto GameUpdateAndRender(FGameMemory& Memory, f32 DeltaTime, FOffscreenBu
 			DebugDrawPosition.x -= Tilemap.TileWidthInMeter * World.PixelsPerMeter * 0.5f;
 			DebugDrawPosition.y += Tilemap.TileWidthInMeter * World.PixelsPerMeter * 0.5f;
 			// Account for the player position as everything is drawn relative to the player
-			DebugDrawPosition -= (State.PlayerPosition.Local * World.PixelsPerMeter) * glm::vec2(1.0f, -1.0f);
+			DebugDrawPosition -= (Player.Position.Local * World.PixelsPerMeter) * glm::vec2(1.0f, -1.0f);
 			DebugDrawPosition += DebugDrawSize * glm::vec2(0.0f, -1.0f);
 			DrawRect(Buffer, DebugDrawPosition, DebugDrawPosition + DebugDrawSize, glm::vec3{ 0.3f, 0.8f, 0.1f });
 		}
 #endif
 
-#if defined(RE_INTERNAL) && 0
+#if defined(RE_INTERNAL) && 1
+		// Draw player collision
 		DrawRect(Buffer, DrawPosition - DrawSize * glm::vec2(0.5f), DrawPosition + DrawSize * glm::vec2(0.5f), glm::vec3(0.65f, 0.08f, 0.15f));
 #endif
 		u32 index = 0;
