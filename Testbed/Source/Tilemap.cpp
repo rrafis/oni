@@ -71,10 +71,15 @@ namespace re::Tilemap
 		}
 	}
 
+	inline auto IsTileEmpty(ETileType TileID)
+	{
+		return TileID == ETileType::Empty || TileID == ETileType::StairUp || TileID == ETileType::StairDown;
+	}
+
 	inline auto IsTilemapPointEmpty(const FWorld& TileWorld, const FTilemapPosition& Position) -> bool
 	{
 		auto TileID = GetTileValue(TileWorld, Position.Tile);
-		return TileID == ETileType::Empty || TileID == ETileType::StairUp || TileID == ETileType::StairDown;
+		return IsTileEmpty(TileID);
 	}
 
 	inline auto OnSameTile(const FWorld& TileWorld, const FTilemapPosition& Lhs, const FTilemapPosition& Rhs) -> bool
@@ -90,5 +95,30 @@ namespace re::Tilemap
 		NewPosition.Local -= glm::vec2(Offset) * TileWorld.TileWidthInMeter;
 
 		return NewPosition;
+	}
+
+	inline auto Subtract(const FWorld& TileWorld, const FTilemapPosition& Lhs, const FTilemapPosition& Rhs) -> glm::vec3
+	{
+		glm::vec2 DeltaXY(Lhs.Tile.x - Rhs.Tile.x, Lhs.Tile.y - Rhs.Tile.y);
+		f32 DeltaZ = Lhs.Tile.z - Rhs.Tile.z;
+
+		glm::vec3 Diff(DeltaXY * TileWorld.TileWidthInMeter + (Lhs.Local - Rhs.Local), DeltaZ * TileWorld.TileWidthInMeter);
+		return Diff;
+	}
+
+	inline auto CreateTilemapPosition(f32 X, f32 Y, f32 Z) -> FTilemapPosition
+	{
+		FTilemapPosition Pos;
+		Pos.Tile.x = X;
+		Pos.Tile.y = Y;
+		Pos.Tile.z = Z;
+		return Pos;
+	}
+
+	inline auto CreateTilemapPosition(glm::vec3 TilePos) -> FTilemapPosition
+	{
+		FTilemapPosition Pos;
+		Pos.Tile = TilePos;
+		return Pos;
 	}
 } // namespace re::Tilemap

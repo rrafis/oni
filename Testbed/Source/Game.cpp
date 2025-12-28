@@ -7,6 +7,8 @@
 #include <filesystem>
 #include <iostream>
 
+#include <entt/entt.hpp>
+
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
 
@@ -39,6 +41,12 @@ struct FSprite
 	glm::uvec2 Max;
 };
 
+struct FPlayerState
+{
+	Tilemap::FTilemapPosition Position;
+	glm::vec2 Velocity;
+};
+
 struct FGameState
 {
 	f32 xOffset;
@@ -48,17 +56,17 @@ struct FGameState
 	Memory::Arena::FMemoryArena WorldArena;
 	FWorld* World;
 
+	entt::handle CameraTarget;
 	Tilemap::FTilemapPosition CameraPosition;
-	Tilemap::FTilemapPosition PlayerPosition;
-	f32 PlayerAcceleration = 2.0f;
-	f32 PlayerFrictionCoeficient;
+
 	glm::vec2 PlayerSize;
-	glm::vec2 PlayerVelocity;
+	f32 PlayerAcceleration;
+	f32 PlayerFrictionCoeficient;
+	f32 PlayerSpriteIdleIndex;
+	f32 PlayerSpriteMoveIndex;
 
 	FImage BackgroundTexture;
 	FImage PlayerTexture;
-
-	f32 PlayerSpriteIdleIndex;
 
 	FSprite BgSprite;
 	std::array<FSprite, 4> PlayerSpriteIdle;
@@ -67,6 +75,8 @@ struct FGameState
 	std::array<FSprite, 6> PlayerSpriteMoveRight;
 	std::array<FSprite, 6> PlayerSpriteMoveLeft;
 	std::array<FSprite, 6> PlayerSpriteMoveUp;
+
+	entt::registry Registry;
 };
 
 static FGameSurfaceDesc Props;
@@ -133,11 +143,23 @@ RE_API auto GameGetSurfaceDesc() -> FGameSurfaceDesc*
 	return &Props;
 }
 
+auto AddPlayer(FGameState& State) -> void
+{
+	entt::handle Entity = { State.Registry, State.Registry.create() };
+	auto& PState = Entity.emplace<FPlayerState>();
+	PState.Position.Tile = { 9, 3, 0 };
+	State.CameraTarget = Entity;
+}
+
 RE_API auto GameInitialize(FGameMemory& Memory) -> void
 {
 	// TODO(Rafis): Assert Memory is valid
 
+	// Map game state to the memory
 	FGameState& State = *(FGameState*)Memory.PermanentStorage;
+	// Construct game state in place
+	new (&State) FGameState();
+
 	State.xOffset = 0;
 	State.yOffset = 0;
 	State.OffsetSpeed = 2 * 255.f;
@@ -218,11 +240,9 @@ RE_API auto GameInitialize(FGameMemory& Memory) -> void
 
 	State.PlayerAcceleration = 150.0f;
 	State.PlayerFrictionCoeficient = 20.f;
-	State.PlayerVelocity = glm::vec2{ 0.0f };
 	State.PlayerSize = glm::vec2{ 1.0f };
 
-	State.PlayerPosition.Tile = glm::uvec3(9, 3, 0);
-	State.PlayerPosition.Local = glm::vec2(0.0f, 0.0f);
+	AddPlayer(State);
 
 	State.CameraPosition.Tile = glm::uvec3(World.ScreenTileDimHalf, 0);
 	State.CameraPosition.Local = glm::vec2(0.0f, 0.0f);
@@ -408,30 +428,9 @@ auto DrawImage(FOffscreenBuffer& Buffer, glm::vec2 InMin, glm::vec2 InMax, const
 	}
 }
 
-RE_API auto GameUpdateAndRender(FGameMemory& Memory, f32 DeltaTime, FOffscreenBuffer& Buffer, const FInputGamepad& Gamepad) -> void
+auto PlayerMove(FGameState& State, FPlayerState& Player, const Tilemap::FWorld& Tilemap, const FInputGamepad& Gamepad, f32 DeltaTime) -> void
 {
-	FGameState& State = *(FGameState*)Memory.PermanentStorage;
-	auto& World = *State.World;
-	auto& Tilemap = *World.Tilemap;
-
-	World.DrawPosition = glm::vec2(0.5f * Buffer.Width, 0.5f * Buffer.Height);
-	World.Padding = glm::vec2(1.f);
-
-	static bool bOptionPressed = false;
-	static bool bOptionWasPressed = false;
-	bOptionWasPressed = bOptionPressed && Gamepad.GamepadOption.bPressed;
-	bOptionPressed = Gamepad.GamepadOption.bPressed;
-	if (bOptionPressed && !bOptionWasPressed)
-	{
-		// State.PlayerPosition.Tile = glm::uvec3(9, 3, State.PlayerPosition.Tile.z);
-		// State.PlayerPosition.Local = glm::vec2(0.0f, 0.0f);
-		// State.PlayerAcceleration = (State.PlayerAcceleration == 4.0f) ? 8.0f : 4.0f;
-		// State.PlayerAcceleration += 1.f;
-	}
-
-	State.PlayerSpriteIdleIndex += 4 * glm::length(State.PlayerVelocity) * DeltaTime;
-
-	auto OldPlayerPos = State.PlayerPosition;
+	auto OldPlayerPos = Player.Position;
 
 	// Calculate new player position
 	{
@@ -459,19 +458,20 @@ RE_API auto GameUpdateAndRender(FGameMemory& Memory, f32 DeltaTime, FOffscreenBu
 		}
 		LeftStickAcceleration *= State.PlayerAcceleration;
 
-		glm::vec2 frictionAcceleration = State.PlayerFrictionCoeficient * (-State.PlayerVelocity);
+		glm::vec2 frictionAcceleration = State.PlayerFrictionCoeficient * (-Player.Velocity);
 		glm::vec2 Acceleration = LeftStickAcceleration + frictionAcceleration;
 
-		auto NewPlayerPosition = 0.5f * Acceleration * DeltaTime * DeltaTime + State.PlayerVelocity * DeltaTime + State.PlayerPosition.Local;
-		State.PlayerVelocity = Acceleration * DeltaTime + State.PlayerVelocity;
+#if 1
+		auto NewPlayerPositionDelta = 0.5f * Acceleration * DeltaTime * DeltaTime + Player.Velocity * DeltaTime;
+		Player.Velocity = Acceleration * DeltaTime + Player.Velocity;
 
-		auto NewPlayerPos = State.PlayerPosition;
-		auto NewPlayerPosLeft = State.PlayerPosition;
-		auto NewPlayerPosRight = State.PlayerPosition;
+		auto NewPlayerPos = Player.Position;
+		auto NewPlayerPosLeft = Player.Position;
+		auto NewPlayerPosRight = Player.Position;
 
-		NewPlayerPos.Local = NewPlayerPosition;
-		NewPlayerPosLeft.Local += NewPlayerPosition + State.PlayerSize * glm::vec2(-0.5f, -0.5f);
-		NewPlayerPosRight.Local += NewPlayerPosition + State.PlayerSize * glm::vec2(0.5f, -0.5f);
+		NewPlayerPos.Local += NewPlayerPositionDelta;
+		NewPlayerPosLeft.Local += NewPlayerPositionDelta + State.PlayerSize * glm::vec2(-0.5f, -0.5f);
+		NewPlayerPosRight.Local += NewPlayerPositionDelta + State.PlayerSize * glm::vec2(0.5f, -0.5f);
 
 		NewPlayerPos = Tilemap::RecalculateTilemapPosition(Tilemap, NewPlayerPos);
 		NewPlayerPosLeft = Tilemap::RecalculateTilemapPosition(Tilemap, NewPlayerPosLeft);
@@ -480,27 +480,97 @@ RE_API auto GameUpdateAndRender(FGameMemory& Memory, f32 DeltaTime, FOffscreenBu
 		if (Tilemap::IsTilemapPointEmpty(Tilemap, NewPlayerPos) && Tilemap::IsTilemapPointEmpty(Tilemap, NewPlayerPosLeft)
 			&& Tilemap::IsTilemapPointEmpty(Tilemap, NewPlayerPosRight))
 		{
-			State.PlayerPosition = NewPlayerPos;
+			Player.Position = NewPlayerPos;
 		}
+#else
+		auto NewPlayerPositionDelta = 0.5f * Acceleration * DeltaTime * DeltaTime + Player.Velocity * DeltaTime;
+		Player.Velocity = Acceleration * DeltaTime + Player.Velocity;
+
+		auto NewPlayerPos = Player.Position;
+		NewPlayerPos.Local += NewPlayerPositionDelta;
+		NewPlayerPos = Tilemap::RecalculateTilemapPosition(Tilemap, NewPlayerPos);
+
+		u32 AbsTileZ = Player.Position.Tile.z;
+		glm::uvec2 MinTile(0, 0);
+		glm::uvec2 OnePastMaxTile(0, 0);
+		auto BestPlayerPosition = Player.Position;
+		auto BestDistance = glm::length(NewPlayerPositionDelta);
+		for (u32 AbsTileY = MinTile.y; AbsTileY != OnePastMaxTile.y; ++AbsTileY)
+		{
+			for (u32 AbsTileX = MinTile.x; AbsTileX != OnePastMaxTile.x; ++AbsTileX)
+			{
+				auto TestTile = Tilemap::CreateTilemapPosition(AbsTileX, AbsTileY, AbsTileZ);
+				auto TileID = Tilemap::GetTileValue(Tilemap, TestTile.Tile);
+				if (Tilemap::IsTileEmpty(TileID))
+				{
+					glm::vec2 MinCorner(-0.5f * Tilemap.TileWidthInMeter);
+					glm::vec2 MaxCorner(0.5f * Tilemap.TileWidthInMeter);
+
+					auto RelNewPlayerPosition = Tilemap::Subtract(Tilemap, TestTile, NewPlayerPos);
+					glm::vec2 TestPos = ClosestPointInRect(MinCorner, MaxCorner, RelNewPlayerPosition);
+					f32 TestDistance = ;
+					if (BestDistance > TestDistance)
+					{
+						BestPlayerPosition = ;
+						BestDistance = ;
+					}
+				}
+			}
+		}
+#endif
 	}
 
 	// Calculate Z layer and camera position
 	{
-		if (!Tilemap::OnSameTile(Tilemap, OldPlayerPos, State.PlayerPosition))
+		if (!Tilemap::OnSameTile(Tilemap, OldPlayerPos, Player.Position))
 		{
-			auto TileID = Tilemap::GetTileValue(Tilemap, State.PlayerPosition.Tile);
+			auto TileID = Tilemap::GetTileValue(Tilemap, Player.Position.Tile);
 			if (TileID == Tilemap::ETileType::StairDown)
 			{
-				State.PlayerPosition.Tile.z = 1;
+				Player.Position.Tile.z = 1;
 			}
 			else if (TileID == Tilemap::ETileType::StairUp)
 			{
-				State.PlayerPosition.Tile.z = 0;
+				Player.Position.Tile.z = 0;
 			}
 		}
+	}
+}
 
+RE_API auto GameUpdateAndRender(FGameMemory& Memory, f32 DeltaTime, FOffscreenBuffer& Buffer, const FInputGamepad& Gamepad) -> void
+{
+	FGameState& State = *(FGameState*)Memory.PermanentStorage;
+	auto& World = *State.World;
+	auto& Tilemap = *World.Tilemap;
+
+	World.DrawPosition = glm::vec2(0.5f * Buffer.Width, 0.5f * Buffer.Height);
+	World.Padding = glm::vec2(1.f);
+
+	static bool bOptionPressed = false;
+	static bool bOptionWasPressed = false;
+	bOptionWasPressed = bOptionPressed && Gamepad.GamepadOption.bPressed;
+	bOptionPressed = Gamepad.GamepadOption.bPressed;
+	if (bOptionPressed && !bOptionWasPressed)
+	{
+		// State.PlayerPosition.Tile = glm::uvec3(9, 3, State.PlayerPosition.Tile.z);
+		// State.PlayerPosition.Local = glm::vec2(0.0f, 0.0f);
+		// State.PlayerAcceleration = (State.PlayerAcceleration == 4.0f) ? 8.0f : 4.0f;
+		// State.PlayerAcceleration += 1.f;
+	}
+
+	State.PlayerSpriteIdleIndex += 8.0f * DeltaTime;
+	auto PlayerView = State.Registry.view<FPlayerState>();
+	for (auto [entity, Player] : PlayerView.each())
+	{
+		State.PlayerSpriteMoveIndex += glm::length(Player.Velocity) * DeltaTime;
+		PlayerMove(State, Player, Tilemap, Gamepad, DeltaTime);
+	}
+
+	if (State.CameraTarget.entity() != entt::null && State.CameraTarget.any_of<FPlayerState>())
+	{
+		auto& Player = State.CameraTarget.get<FPlayerState>();
 		State.CameraPosition.Tile = Tilemap::FTilePosition(
-			(glm::uvec2(State.PlayerPosition.Tile) / World.ScreenTileDim) * World.ScreenTileDim + World.ScreenTileDimHalf, State.PlayerPosition.Tile.z);
+			(glm::uvec2(Player.Position.Tile) / World.ScreenTileDim) * World.ScreenTileDim + World.ScreenTileDimHalf, Player.Position.Tile.z);
 	}
 
 	// Clear screen
@@ -537,7 +607,7 @@ RE_API auto GameUpdateAndRender(FGameMemory& Memory, f32 DeltaTime, FOffscreenBu
 					case Tilemap::ETileType::Wall:
 					{
 						Color = glm::vec3(1);
-						if (State.PlayerPosition.Tile.z == 1)
+						if (State.CameraPosition.Tile.z == 1)
 						{
 							Color = glm::vec3(0.07f, 0.15f, 0.18f);
 						}
@@ -578,12 +648,13 @@ RE_API auto GameUpdateAndRender(FGameMemory& Memory, f32 DeltaTime, FOffscreenBu
 	}
 
 	// Draw Player
+	for (auto [entity, Player] : PlayerView.each())
 	{
 		auto DrawSize = State.PlayerSize * World.PixelsPerMeter;
 		auto DrawPosition = World.DrawPosition;
 		DrawPosition -= (glm::vec2(State.CameraPosition.Tile) * World.TileWidthInPixels) * glm::vec2(1.0f, -1.0f);
-		DrawPosition += (glm::vec2(State.PlayerPosition.Tile) * World.TileWidthInPixels) * glm::vec2(1.0f, -1.0f);
-		DrawPosition += (State.PlayerPosition.Local * World.PixelsPerMeter) * glm::vec2(1.0f, -1.0f);
+		DrawPosition += (glm::vec2(Player.Position.Tile) * World.TileWidthInPixels) * glm::vec2(1.0f, -1.0f);
+		DrawPosition += (Player.Position.Local * World.PixelsPerMeter) * glm::vec2(1.0f, -1.0f);
 
 #if defined(RE_INTERNAL) && 0
 		// Draw the tile player is on
@@ -603,30 +674,40 @@ RE_API auto GameUpdateAndRender(FGameMemory& Memory, f32 DeltaTime, FOffscreenBu
 #if defined(RE_INTERNAL) && 0
 		DrawRect(Buffer, DrawPosition - DrawSize * glm::vec2(0.5f), DrawPosition + DrawSize * glm::vec2(0.5f), glm::vec3(0.65f, 0.08f, 0.15f));
 #endif
-		auto index = (u32)(glm::round(State.PlayerSpriteIdleIndex)) % State.PlayerSpriteIdle.size();
-		if (State.PlayerVelocity.y < -0.1f)
+		u32 index = 0;
+		if (glm::abs(Player.Velocity.x) < 0.1f && glm::abs(Player.Velocity.y) < 0.1f)
 		{
-			index = (u32)(glm::round(State.PlayerSpriteIdleIndex)) % State.PlayerSpriteMoveDown.size();
-			DrawImage(Buffer, DrawPosition, DrawPosition + DrawSize, State.PlayerSpriteMoveDown[index]);
-		}
-		else if (State.PlayerVelocity.y > 0.1f)
-		{
-			index = (u32)(glm::round(State.PlayerSpriteIdleIndex)) % State.PlayerSpriteMoveUp.size();
-			DrawImage(Buffer, DrawPosition, DrawPosition + DrawSize, State.PlayerSpriteMoveUp[index]);
-		}
-		else if (State.PlayerVelocity.x > 0.1f)
-		{
-			index = (u32)(glm::round(State.PlayerSpriteIdleIndex)) % State.PlayerSpriteMoveRight.size();
-			DrawImage(Buffer, DrawPosition, DrawPosition + DrawSize, State.PlayerSpriteMoveRight[index]);
-		}
-		else if (State.PlayerVelocity.x < -0.1f)
-		{
-			index = (u32)(glm::round(State.PlayerSpriteIdleIndex)) % State.PlayerSpriteMoveLeft.size();
-			DrawImage(Buffer, DrawPosition, DrawPosition + DrawSize, State.PlayerSpriteMoveLeft[index]);
+			index = (u32)(glm::round(State.PlayerSpriteIdleIndex)) % State.PlayerSpriteIdle.size();
+			DrawImage(Buffer, DrawPosition, DrawPosition + DrawSize, State.PlayerSpriteIdle[index]);
 		}
 		else
 		{
-			DrawImage(Buffer, DrawPosition, DrawPosition + DrawSize, State.PlayerSpriteIdle[index]);
+			if (glm::abs(Player.Velocity.x) > glm::abs(Player.Velocity.y))
+			{
+				if (Player.Velocity.x > 0)
+				{
+					index = (u32)(glm::round(State.PlayerSpriteMoveIndex)) % State.PlayerSpriteMoveRight.size();
+					DrawImage(Buffer, DrawPosition, DrawPosition + DrawSize, State.PlayerSpriteMoveRight[index]);
+				}
+				else
+				{
+					index = (u32)(glm::round(State.PlayerSpriteMoveIndex)) % State.PlayerSpriteMoveLeft.size();
+					DrawImage(Buffer, DrawPosition, DrawPosition + DrawSize, State.PlayerSpriteMoveLeft[index]);
+				}
+			}
+			else
+			{
+				if (Player.Velocity.y > 0)
+				{
+					index = (u32)(glm::round(State.PlayerSpriteMoveIndex)) % State.PlayerSpriteMoveUp.size();
+					DrawImage(Buffer, DrawPosition, DrawPosition + DrawSize, State.PlayerSpriteMoveUp[index]);
+				}
+				else
+				{
+					index = (u32)(glm::round(State.PlayerSpriteMoveIndex)) % State.PlayerSpriteMoveDown.size();
+					DrawImage(Buffer, DrawPosition, DrawPosition + DrawSize, State.PlayerSpriteMoveDown[index]);
+				}
+			}
 		}
 	}
 
