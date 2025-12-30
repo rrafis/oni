@@ -38,6 +38,9 @@ auto GameModuleLoad() -> FGameModule
 	NSString* src = [exeDir stringByAppendingPathComponent:[NSString stringWithFormat:@"libTestbed.dylib"]];
 	static u32 LibraryLoadCounter = 0;
 	NSString* dst = [exeDir stringByAppendingPathComponent:[NSString stringWithFormat:@"libTestbed_hot_reload_%d.dylib", LibraryLoadCounter++]];
+	// Remove hotreload library first if it is exists
+	if ([[NSFileManager defaultManager] fileExistsAtPath:dst])
+		[[NSFileManager defaultManager] removeItemAtPath:dst error:nil];
 	[[NSFileManager defaultManager] copyItemAtPath:src toPath:dst error:nil];
 
 	FGameModule GameModule = {};
