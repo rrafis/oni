@@ -3,7 +3,7 @@
 #include "GameMath.h"
 #include "Memory.h"
 
-namespace re::Tilemap
+namespace Tilemap
 {
 	constexpr u32 ChunkShift = 4;
 	constexpr u32 ChunkMask = (1u << ChunkShift) - 1u;
@@ -136,4 +136,16 @@ namespace re::Tilemap
 		Pos.Local = glm::vec2(0.0f);
 		return Pos;
 	}
-} // namespace re::Tilemap
+
+	auto MapToCameraSpace(FWorld& TileWorld, const FTilemapPosition& CameraPos, const FTilemapPosition& DormantPos, glm::vec3& Position)
+	{
+		auto Diff = Tilemap::Subtract(TileWorld, DormantPos, CameraPos);
+		Position = glm::vec3(Diff.x, Diff.y, Position.z);
+	}
+
+	auto MapToTileSpace(FWorld& TileWorld, const FTilemapPosition& CameraPos, const glm::vec3& Position, FTilemapPosition& DormantPos)
+	{
+		DormantPos = Tilemap::Offset(TileWorld, CameraPos, Position);
+		DormantPos.Tile.z = Position.z;
+	}
+} // namespace Tilemap

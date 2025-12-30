@@ -2,7 +2,7 @@
 
 #include <Platform.h>
 
-namespace re::Memory::Arena
+namespace Memory::Arena
 {
 	struct FMemoryArena
 	{
@@ -43,4 +43,4 @@ namespace re::Memory::Arena
 		usize Size = sizeof(AllocType) * Count;
 		return (AllocType*)Allocate(Arena, Size);
 	}
-} // namespace re::Memory::Arena
+} // namespace Memory::Arena

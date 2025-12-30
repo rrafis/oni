@@ -4,7 +4,7 @@
 
 #include <glm/glm.hpp>
 
-namespace re::Tilemap
+namespace Tilemap
 {
 	using FTilePosition = glm::uvec3;
 	using FChunkCoordinate = glm::uvec3;
@@ -39,4 +39,4 @@ namespace re::Tilemap
 		glm::uvec2 ChunkDimension;
 		f32 TileWidthInMeter;
 	};
-} // namespace re::Tilemap
+} // namespace Tilemap

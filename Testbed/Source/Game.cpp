@@ -12,8 +12,6 @@
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
 
-using namespace re;
-
 struct FWorld
 {
 	Tilemap::FWorld* Tilemap;
@@ -41,11 +39,51 @@ struct FSprite
 	glm::uvec2 Max;
 };
 
-struct FPlayerState
+namespace Comp
 {
-	Tilemap::FTilemapPosition Position;
-	glm::vec2 Velocity;
-};
+	struct FPlayer
+	{
+		u32 ControllerIndex;
+	};
+
+	struct FTransform
+	{
+		glm::vec3 Position;
+	};
+
+	struct FMovement
+	{
+		glm::vec2 Velocity;
+		f32 PlayerAccelerationRate;
+	};
+
+	struct FSize
+	{
+		glm::vec2 Size;
+	};
+
+	struct FDraw
+	{
+		glm::vec3 Color;
+		FSprite* Sprite;
+	};
+
+	struct FTileTransform
+	{
+		Tilemap::FTilemapPosition Position;
+	};
+
+	struct FTeleport
+	{
+		i32 AbsTileZ;
+	};
+
+	struct FCollider
+	{
+		glm::vec2 Size;
+		bool bCollide;
+	};
+} // namespace Comp
 
 struct FGameState
 {
@@ -59,8 +97,6 @@ struct FGameState
 	entt::handle CameraTarget;
 	Tilemap::FTilemapPosition CameraPosition;
 
-	glm::vec2 PlayerSize;
-	f32 PlayerAcceleration;
 	f32 PlayerFrictionCoeficient;
 	f32 PlayerSpriteIdleIndex;
 	f32 PlayerSpriteMoveIndex;
@@ -143,12 +179,260 @@ RE_API auto GameGetSurfaceDesc() -> FGameSurfaceDesc*
 	return &Props;
 }
 
-auto AddPlayer(FGameState& State) -> void
+auto AddPlayer(FGameState& State, glm::uvec3 TilePos) -> void
 {
 	entt::handle Entity = { State.Registry, State.Registry.create() };
-	auto& PState = Entity.emplace<FPlayerState>();
-	PState.Position.Tile = { 9, 3, 0 };
-	State.CameraTarget = Entity;
+
+	auto& TileTransformComp = Entity.emplace<Comp::FTileTransform>();
+	TileTransformComp.Position.Tile = TilePos;
+
+	auto& MovementComp = Entity.emplace<Comp::FMovement>();
+	MovementComp.PlayerAccelerationRate = 250.0f;
+
+	auto& SizeComp = Entity.emplace<Comp::FSize>();
+	SizeComp.Size = glm::vec2{ 0.65f, 0.9f };
+
+	auto& DrawComp = Entity.emplace<Comp::FDraw>();
+	DrawComp.Color = glm::vec3(0.8f, 0.15f, 0.85f);
+
+	auto& ColliderComp = Entity.emplace<Comp::FCollider>();
+	ColliderComp.Size = SizeComp.Size;
+	ColliderComp.bCollide = true;
+
+	auto& PlayerComp = Entity.emplace<Comp::FPlayer>();
+
+	if (State.CameraTarget.entity() == entt::null)
+	{
+		State.CameraTarget = Entity;
+	}
+}
+
+auto AddWall(FGameState& State, Tilemap::FTilePosition Pos, glm::vec2 Size, Tilemap::ETileType Type) -> void
+{
+	entt::handle Entity = { State.Registry, State.Registry.create() };
+
+	auto& TileTransformComp = Entity.emplace<Comp::FTileTransform>();
+	TileTransformComp.Position.Tile = Pos;
+
+	auto& SizeComp = Entity.emplace<Comp::FSize>();
+	SizeComp.Size = Size;
+
+	auto& DrawComp = Entity.emplace<Comp::FDraw>();
+
+	if (Type == Tilemap::ETileType::StairDown)
+	{
+		auto& TeleportComp = Entity.emplace<Comp::FTeleport>();
+		TeleportComp.AbsTileZ = -1;
+		auto& ColliderComp = Entity.emplace<Comp::FCollider>();
+		ColliderComp.Size = SizeComp.Size;
+		ColliderComp.bCollide = false;
+	}
+	else if (Type == Tilemap::ETileType::StairUp)
+	{
+		auto& TeleportComp = Entity.emplace<Comp::FTeleport>();
+		TeleportComp.AbsTileZ = +1;
+		auto& ColliderComp = Entity.emplace<Comp::FCollider>();
+		ColliderComp.Size = SizeComp.Size;
+		ColliderComp.bCollide = false;
+	}
+	else if (Type == Tilemap::ETileType::Wall)
+	{
+		auto& ColliderComp = Entity.emplace<Comp::FCollider>();
+		ColliderComp.Size = SizeComp.Size;
+		ColliderComp.bCollide = true;
+	}
+
+	switch (Type)
+	{
+		case Tilemap::ETileType::Wall:
+		{
+			DrawComp.Color = glm::vec3(1);
+			if (Pos.z % 2 == 1)
+			{
+				DrawComp.Color = glm::vec3(0.07f, 0.15f, 0.18f);
+			}
+			break;
+		}
+		case Tilemap::ETileType::Uninitialized:
+		{
+			DrawComp.Color = glm::vec3(0.5f);
+			break;
+		}
+		case Tilemap::ETileType::StairUp:
+		{
+			DrawComp.Color = glm::vec3(1, 0, 0);
+			break;
+		}
+		case Tilemap::ETileType::StairDown:
+		{
+			DrawComp.Color = glm::vec3(0, 0, 1);
+			break;
+		}
+		default:
+		{
+			DrawComp.Color = glm::vec3(0.f);
+			break;
+		}
+	}
+}
+
+auto GenerateTilemap(FGameState& State, u32 ScreenCount) -> void
+{
+	struct FTilemapScreen
+	{
+		bool doorTop = false;
+		bool doorRight = false;
+		bool doorBottom = false;
+		bool doorLeft = false;
+		bool stairUp = false;
+		bool stairDown = false;
+		u32 ScreenX = 0;
+		u32 ScreenY = 0;
+		u32 ScreenZ = 0;
+	};
+
+	std::vector<FTilemapScreen> Screens;
+	Screens.resize(ScreenCount);
+
+	auto ScreenPos = glm::uvec2(0);
+	u32 ScreenZ = 0;
+	for (u32 ScreenIndex = 0; ScreenIndex < ScreenCount; ++ScreenIndex)
+	{
+		auto& TScreen = Screens[ScreenIndex];
+		TScreen.ScreenX = ScreenPos.x;
+		TScreen.ScreenY = ScreenPos.y;
+		TScreen.ScreenZ = ScreenZ;
+
+		u32 RandomValue;
+		if (ScreenIndex > 0 && (Screens[ScreenIndex - 1].stairDown || Screens[ScreenIndex - 1].stairUp))
+		{
+			RandomValue = rand() % 2;
+		}
+		else
+		{
+			RandomValue = rand() % 3;
+		}
+
+		if (RandomValue == 2 && ScreenIndex + 1 < ScreenCount)
+		{
+			if (ScreenZ == 0)
+			{
+				TScreen.stairUp = true;
+				Screens[ScreenIndex + 1].stairDown = true;
+			}
+			else
+			{
+				TScreen.stairDown = true;
+				Screens[ScreenIndex + 1].stairUp = true;
+			}
+
+			ScreenZ = (ScreenZ + 1) % 2;
+		}
+		else if (RandomValue == 0)
+		{
+			// right door
+			if (ScreenIndex + 1 < ScreenCount)
+			{
+				TScreen.doorRight = true;
+				Screens[ScreenIndex + 1].doorLeft = true;
+				ScreenPos.x += 1;
+			}
+		}
+		else
+		{
+			// top door
+			if (ScreenIndex + 1 < ScreenCount)
+			{
+				TScreen.doorTop = true;
+				Screens[ScreenIndex + 1].doorBottom = true;
+				ScreenPos.y += 1;
+			}
+		}
+	}
+
+	auto ScreenTileDim = State.World->ScreenTileDim;
+	auto ScreenTileDimHalf = State.World->ScreenTileDimHalf;
+	for (auto& Screen : Screens)
+	{
+		for (u32 TileY = 0; TileY < ScreenTileDim.y; ++TileY)
+		{
+			for (u32 TileX = 0; TileX < ScreenTileDim.x; ++TileX)
+			{
+				auto TilePosition =
+					Tilemap::FTilePosition(glm::uvec2(Screen.ScreenX, Screen.ScreenY) * ScreenTileDim + glm::uvec2(TileX, TileY), Screen.ScreenZ);
+				Tilemap::ETileType TileValue = Tilemap::ETileType::Empty;
+
+				if (TileY == 0 || TileY == ScreenTileDim.y - 1)
+				{
+					TileValue = Tilemap::ETileType::Wall;
+					if (Screen.doorBottom && TileY == 0 && TileX >= ScreenTileDimHalf.x - 1 && TileX <= ScreenTileDimHalf.x + 1)
+					{
+						TileValue = Tilemap::ETileType::Empty;
+					}
+					if (Screen.doorTop && TileY == (ScreenTileDim.y - 1) && TileX >= ScreenTileDimHalf.x - 1 && TileX <= ScreenTileDimHalf.x + 1)
+					{
+						TileValue = Tilemap::ETileType::Empty;
+					}
+				}
+
+				if (TileX == 0 || TileX == ScreenTileDim.x - 1)
+				{
+					TileValue = Tilemap::ETileType::Wall;
+					if (Screen.doorRight && TileX == (ScreenTileDim.x - 1) && TileY >= ScreenTileDimHalf.y - 1 && TileY <= ScreenTileDimHalf.y + 1)
+					{
+						TileValue = Tilemap::ETileType::Empty;
+					}
+					if (Screen.doorLeft && TileX == 0 && TileY >= ScreenTileDimHalf.y - 1 && TileY <= ScreenTileDimHalf.y + 1)
+					{
+						TileValue = Tilemap::ETileType::Empty;
+					}
+				}
+
+				if (TileX == ScreenTileDimHalf.x - 1 && TileY == ScreenTileDimHalf.y - 1 && Screen.stairDown)
+				{
+					TileValue = Tilemap::ETileType::StairDown;
+				}
+
+				if (TileX == ScreenTileDimHalf.x + 1 && TileY == ScreenTileDimHalf.y + 1 && Screen.stairUp)
+				{
+					TileValue = Tilemap::ETileType::StairUp;
+				}
+
+				Tilemap::SetTileValue(State.WorldArena, *State.World->Tilemap, TilePosition, TileValue);
+				if (TileValue != Tilemap::ETileType::Empty)
+					AddWall(State, TilePosition, glm::vec2(State.World->Tilemap->TileWidthInMeter), TileValue);
+			}
+		}
+	}
+}
+
+auto SetCamera(FGameState& State, Tilemap::FTilemapPosition NewCamPos)
+{
+	if (State.CameraPosition.Tile != NewCamPos.Tile || State.CameraPosition.Local != NewCamPos.Local)
+	{
+		State.CameraPosition = NewCamPos;
+		auto CameraBounds = Math::RectFromCenter(glm::vec2(State.CameraPosition.Tile), 3.0f * glm::vec2(State.World->ScreenTileDimHalf));
+
+		auto TileView = State.Registry.view<Comp::FTileTransform>();
+		for (auto [Entity, TileTransform] : TileView.each())
+		{
+			auto Handle = entt::handle(State.Registry, Entity);
+			if (Math::IsInRect(CameraBounds, glm::vec2(TileTransform.Position.Tile)))
+			{
+				Handle.get_or_emplace<Comp::FTransform>();
+			}
+			else if (Handle.any_of<Comp::FTransform>())
+			{
+				Handle.remove<Comp::FTransform>();
+			}
+		}
+
+		auto View = State.Registry.view<Comp::FTransform, Comp::FTileTransform>();
+		for (auto [Entity, Transform, TileTransform] : View.each())
+		{
+			Tilemap::MapToCameraSpace(*State.World->Tilemap, State.CameraPosition, TileTransform.Position, Transform.Position);
+		}
+	}
 }
 
 RE_API auto GameInitialize(FGameMemory& Memory) -> void
@@ -184,68 +468,14 @@ RE_API auto GameInitialize(FGameMemory& Memory) -> void
 
 	World.ScreenTileDim = glm::uvec2(21, 15);
 	World.ScreenTileDimHalf = World.ScreenTileDim / glm::uvec2(2);
-	u32 ScreenZ = 0;
-	auto Screen = glm::uvec2(0);
-	for (u32 ScreenIndex = 0; ScreenIndex < 100; ++ScreenIndex)
-	{
-		u32 RandomValue = rand() % 3;
-		for (u32 TileY = 0; TileY < World.ScreenTileDim.y; ++TileY)
-		{
-			for (u32 TileX = 0; TileX < World.ScreenTileDim.x; ++TileX)
-			{
-				Tilemap::ETileType TileValue = Tilemap::ETileType::Empty;
-				if (TileY == 0 || TileY == World.ScreenTileDim.y - 1)
-				{
-					TileValue = Tilemap::ETileType::Wall;
-					if (TileX >= World.ScreenTileDimHalf.x - 1 && TileX <= World.ScreenTileDimHalf.x + 1)
-					{
-						TileValue = Tilemap::ETileType::Empty;
-					}
-				}
 
-				if (TileX == 0 || TileX == World.ScreenTileDim.x - 1)
-				{
-					TileValue = Tilemap::ETileType::Wall;
-					if (TileY >= World.ScreenTileDimHalf.y - 1 && TileY <= World.ScreenTileDimHalf.y + 1)
-					{
-						TileValue = Tilemap::ETileType::Empty;
-					}
-				}
+	GenerateTilemap(State, 10);
 
-				if (RandomValue == 2)
-				{
-					if (TileX == 10 && TileY == 10)
-					{
-						TileValue = ScreenZ == 0 ? Tilemap::ETileType::StairDown : Tilemap::ETileType::StairUp;
-					}
-				}
-
-				auto TilePosition = Tilemap::FTilePosition(Screen * World.ScreenTileDim + glm::uvec2(TileX, TileY), ScreenZ);
-				Tilemap::SetTileValue(State.WorldArena, Tilemap, TilePosition, TileValue);
-			}
-		}
-		if (RandomValue == 2)
-		{
-			ScreenZ = (ScreenZ + 1) % Tilemap.WorldDimension.z;
-		}
-		else if (RandomValue == 0)
-		{
-			Screen.x += 1;
-		}
-		else
-		{
-			Screen.y += 1;
-		}
-	}
-
-	State.PlayerAcceleration = 150.0f;
 	State.PlayerFrictionCoeficient = 20.f;
-	State.PlayerSize = glm::vec2{ 0.65f, 0.9f };
 
-	AddPlayer(State);
+	AddPlayer(State, { 9, 9, 0 });
 
-	State.CameraPosition.Tile = glm::uvec3(World.ScreenTileDimHalf, 0);
-	State.CameraPosition.Local = glm::vec2(0.0f, 0.0f);
+	SetCamera(State, { glm::uvec3(World.ScreenTileDimHalf, 0), glm::vec2(0.0f, 0.0f) });
 
 	State.BackgroundTexture.Pixels = (u32*)Memory.TempStorage;
 	LoadImage(State.BackgroundTexture, "test/background.png");
@@ -449,12 +679,22 @@ auto TestWall(f32 WallX, f32 PlayerRelX, f32 PlayerRelY, f32 PlayerDeltaX, f32 P
 	return false;
 }
 
-auto PlayerMove(FGameState& State, FPlayerState& Player, const Tilemap::FWorld& Tilemap, const FInputGamepad& Gamepad, f32 DeltaTime) -> void
+auto PlayerMove(FGameState& State, const FInputGamepad& Gamepad, f32 DeltaTime) -> void
 {
-	auto OldPlayerPos = Player.Position;
+	auto MoveView = State.Registry.view<Comp::FTransform, Comp::FMovement, Comp::FCollider, Comp::FTileTransform>();
+	auto ColView = State.Registry.view<Comp::FTransform, Comp::FCollider, Comp::FTileTransform>();
 
 	// Calculate new player position
+	for (auto [Entity, Transform, Movement, Collider, TileTransform] : MoveView.each())
 	{
+		// TODO(Rafis): TEMP, this should handle animation system
+		if (State.Registry.any_of<Comp::FPlayer>(Entity))
+		{
+			State.PlayerSpriteMoveIndex += glm::length(Movement.Velocity) * DeltaTime;
+		}
+
+		auto OldPosition = Transform.Position;
+
 		auto LeftStickAcceleration = glm::vec2(Gamepad.GamepadThumbstickLeft.X, Gamepad.GamepadThumbstickLeft.Y);
 		if (Gamepad.GamepadDpadUp.bPressed)
 		{
@@ -477,102 +717,93 @@ auto PlayerMove(FGameState& State, FPlayerState& Player, const Tilemap::FWorld& 
 		{
 			LeftStickAcceleration = glm::normalize(LeftStickAcceleration);
 		}
-		LeftStickAcceleration *= State.PlayerAcceleration;
+		LeftStickAcceleration *= Movement.PlayerAccelerationRate;
 
-		glm::vec2 frictionAcceleration = State.PlayerFrictionCoeficient * (-Player.Velocity);
+		glm::vec2 frictionAcceleration = State.PlayerFrictionCoeficient * (-Movement.Velocity);
 		glm::vec2 Acceleration = LeftStickAcceleration + frictionAcceleration;
 
-#if 0
-		auto NewPlayerPositionDelta = 0.5f * Acceleration * DeltaTime * DeltaTime + Player.Velocity * DeltaTime;
-		Player.Velocity = Acceleration * DeltaTime + Player.Velocity;
-
-		auto NewPlayerPos = Tilemap::Offset(Tilemap, Player.Position, NewPlayerPositionDelta);
-		auto NewPlayerPosLeft = Tilemap::Offset(Tilemap, Player.Position, NewPlayerPositionDelta + State.PlayerSize * glm::vec2(-0.5f, -0.5f));
-		auto NewPlayerPosRight = Tilemap::Offset(Tilemap, Player.Position, NewPlayerPositionDelta + State.PlayerSize * glm::vec2(0.5f, -0.5f));
-
-		if (Tilemap::IsTilemapPointEmpty(Tilemap, NewPlayerPos) && Tilemap::IsTilemapPointEmpty(Tilemap, NewPlayerPosLeft)
-			&& Tilemap::IsTilemapPointEmpty(Tilemap, NewPlayerPosRight))
-		{
-			Player.Position = NewPlayerPos;
-		}
-#else
-		glm::vec2 PlayerDelta = 0.5f * Acceleration * DeltaTime * DeltaTime + Player.Velocity * DeltaTime;
-		Player.Velocity = Acceleration * DeltaTime + Player.Velocity;
-
-		auto NewPlayerPos = Tilemap::Offset(Tilemap, Player.Position, PlayerDelta);
-
-		u32 AbsTileZ = Player.Position.Tile.z;
-
-		glm::uvec2 EntityTile = glm::ceil(State.PlayerSize / Tilemap.TileWidthInMeter);
-		glm::uvec2 StartTile(glm::min(Player.Position.Tile.x, NewPlayerPos.Tile.x), glm::min(Player.Position.Tile.y, NewPlayerPos.Tile.y));
-		glm::uvec2 EndTile(glm::max(Player.Position.Tile.x, NewPlayerPos.Tile.x), glm::max(Player.Position.Tile.y, NewPlayerPos.Tile.y));
-		StartTile -= EntityTile;
-		EndTile += EntityTile;
+		glm::vec2 MoveDelta = 0.5f * Acceleration * DeltaTime * DeltaTime + Movement.Velocity * DeltaTime;
+		Movement.Velocity = Acceleration * DeltaTime + Movement.Velocity;
 
 		glm::vec2 WallNormal(0.0f);
 		f32 tRemain = 1.0f;
+		entt::handle HitEntity;
 		for (u32 Iter = 0; Iter < 4 && tRemain > 0.0f; ++Iter)
 		{
 			f32 tMin = 1.0f;
-			u32 AbsTileY = StartTile.y;
-			for (u32 AbsTileY = StartTile.y; AbsTileY <= EndTile.y; ++AbsTileY)
+			for (auto [ColEntity, ColTransform, ColCollider, ColTileTransform] : ColView.each())
 			{
-				for (u32 AbsTileX = StartTile.x; AbsTileX <= EndTile.x; ++AbsTileX)
+				if (Entity != ColEntity)
 				{
-					auto TestTile = Tilemap::CreateTilemapPosition(AbsTileX, AbsTileY, AbsTileZ);
-					auto TileID = Tilemap::GetTileValue(Tilemap, TestTile.Tile);
-					if (!Tilemap::IsTileEmpty(TileID))
+					if (TileTransform.Position.Tile.z == ColTileTransform.Position.Tile.z)
 					{
-						glm::vec2 Diameter = State.PlayerSize + Tilemap.TileWidthInMeter;
-						glm::vec2 MinCorner = -0.5f * Diameter;
-						glm::vec2 MaxCorner = 0.5f * Diameter;
+						if (ColCollider.bCollide)
+						{
+							glm::vec2 Diameter = Collider.Size + ColCollider.Size;
+							glm::vec2 MinCorner = -0.5f * Diameter;
+							glm::vec2 MaxCorner = 0.5f * Diameter;
 
-						auto RelPlayerPosition = Tilemap::Subtract(Tilemap, Player.Position, TestTile);
-						glm::vec2 Rel(RelPlayerPosition);
+							auto Rel = Transform.Position - ColTransform.Position;
 
-						if (TestWall(MinCorner.x, Rel.x, Rel.y, PlayerDelta.x, PlayerDelta.y, tMin, MinCorner.y, MaxCorner.y))
-						{
-							WallNormal = { -1.0f, 0.0f };
+							if (TestWall(MinCorner.x, Rel.x, Rel.y, MoveDelta.x, MoveDelta.y, tMin, MinCorner.y, MaxCorner.y))
+							{
+								WallNormal = { -1.0f, 0.0f };
+								HitEntity = entt::handle(State.Registry, ColEntity);
+							}
+							if (TestWall(MaxCorner.x, Rel.x, Rel.y, MoveDelta.x, MoveDelta.y, tMin, MinCorner.y, MaxCorner.y))
+							{
+								WallNormal = { 1.0f, 0.0f };
+								HitEntity = entt::handle(State.Registry, ColEntity);
+							}
+							if (TestWall(MinCorner.y, Rel.y, Rel.x, MoveDelta.y, MoveDelta.x, tMin, MinCorner.x, MaxCorner.x))
+							{
+								WallNormal = { 0.0f, -1.0f };
+								HitEntity = entt::handle(State.Registry, ColEntity);
+							}
+							if (TestWall(MaxCorner.y, Rel.y, Rel.x, MoveDelta.y, MoveDelta.x, tMin, MinCorner.x, MaxCorner.x))
+							{
+								WallNormal = { 0.0f, 1.0f };
+								HitEntity = entt::handle(State.Registry, ColEntity);
+							}
 						}
-						if (TestWall(MaxCorner.x, Rel.x, Rel.y, PlayerDelta.x, PlayerDelta.y, tMin, MinCorner.y, MaxCorner.y))
+						else
 						{
-							WallNormal = { 1.0f, 0.0f };
-						}
-						if (TestWall(MinCorner.y, Rel.y, Rel.x, PlayerDelta.y, PlayerDelta.x, tMin, MinCorner.x, MaxCorner.x))
-						{
-							WallNormal = { 0.0f, -1.0f };
-						}
-						if (TestWall(MaxCorner.y, Rel.y, Rel.x, PlayerDelta.y, PlayerDelta.x, tMin, MinCorner.x, MaxCorner.x))
-						{
-							WallNormal = { 0.0f, 1.0f };
+							glm::vec2 Diameter = Collider.Size + ColCollider.Size;
+							glm::vec2 MinCorner = -0.5f * Diameter;
+							glm::vec2 MaxCorner = 0.5f * Diameter;
+
+							auto Rel = Transform.Position - ColTransform.Position;
+							if (glm::length(Rel) <= glm::length(Diameter) / 2.0f)
+							{
+								HitEntity = entt::handle(State.Registry, ColEntity);
+							}
 						}
 					}
 				}
 			}
 
-			Player.Position = Tilemap::Offset(Tilemap, Player.Position, tMin * PlayerDelta);
-			Player.Velocity = Player.Velocity - 1.0f * Player.Velocity * WallNormal * WallNormal;
-			PlayerDelta = PlayerDelta - 1.0f * PlayerDelta * WallNormal * WallNormal;
-
-			tRemain -= tMin * tRemain;
-		}
-#endif
-	}
-
-	// Calculate Z layer and camera position
-	{
-		if (!Tilemap::OnSameTile(Tilemap, OldPlayerPos, Player.Position))
-		{
-			auto TileID = Tilemap::GetTileValue(Tilemap, Player.Position.Tile);
-			if (TileID == Tilemap::ETileType::StairDown)
+			Transform.Position += glm::vec3(tMin * MoveDelta, 0.0f);
+			if (HitEntity.entity() != entt::null)
 			{
-				Player.Position.Tile.z = 1;
+				Movement.Velocity = Movement.Velocity - 1.0f * Movement.Velocity * WallNormal * WallNormal;
+				MoveDelta = MoveDelta - 1.0f * MoveDelta * WallNormal * WallNormal;
+
+				tRemain -= tMin * tRemain;
+
+				if (HitEntity.any_of<Comp::FTeleport>())
+				{
+					auto& TeleportComp = HitEntity.get<Comp::FTeleport>();
+					Transform.Position.z += TeleportComp.AbsTileZ;
+					break;
+				}
 			}
-			else if (TileID == Tilemap::ETileType::StairUp)
+			else
 			{
-				Player.Position.Tile.z = 0;
+				break;
 			}
 		}
+
+		Tilemap::MapToTileSpace(*State.World->Tilemap, State.CameraPosition, Transform.Position, TileTransform.Position);
 	}
 }
 
@@ -598,155 +829,98 @@ RE_API auto GameUpdateAndRender(FGameMemory& Memory, f32 DeltaTime, FOffscreenBu
 	}
 
 	State.PlayerSpriteIdleIndex += 8.0f * DeltaTime;
-	auto PlayerView = State.Registry.view<FPlayerState>();
-	for (auto [entity, Player] : PlayerView.each())
+
+	PlayerMove(State, Gamepad, DeltaTime);
+
+	auto MoveView = State.Registry.view<Comp::FMovement, Comp::FDraw>();
+	for (auto [entity, Movement, Draw] : MoveView.each())
 	{
-		State.PlayerSpriteMoveIndex += glm::length(Player.Velocity) * DeltaTime;
-		PlayerMove(State, Player, Tilemap, Gamepad, DeltaTime);
-	}
-
-	if (State.CameraTarget.entity() != entt::null && State.CameraTarget.any_of<FPlayerState>())
-	{
-		auto& Player = State.CameraTarget.get<FPlayerState>();
-		State.CameraPosition.Tile = Tilemap::FTilePosition(
-			(glm::uvec2(Player.Position.Tile) / World.ScreenTileDim) * World.ScreenTileDim + World.ScreenTileDimHalf, Player.Position.Tile.z);
-	}
-
-	// Clear screen
-	// DrawRect(Buffer, glm::vec2{ 0.0f, 0.0f }, glm::vec2{ Buffer.Width, Buffer.Height }, glm::vec3{ 0.08f, 0.17f, 0.85f });
-
-	DrawImage(Buffer, glm::vec2{ 0, 0 }, glm::vec2{ State.BgSprite.Texture->Width, State.BgSprite.Texture->Height }, State.BgSprite);
-
-	i32 HalfTilesPerScreenHorizontal = (i32)(glm::floor(Buffer.Width / World.TileWidthInPixels) + 1) / 2;
-	i32 HalfTilesPerScreenVertical = (i32)(glm::floor(Buffer.Height / World.TileWidthInPixels) + 1) / 2;
-
-	// Draw tiles
-	for (i32 RelRow = -HalfTilesPerScreenVertical; RelRow <= HalfTilesPerScreenVertical; ++RelRow)
-	{
-		for (i32 RelColumn = -HalfTilesPerScreenHorizontal; RelColumn <= HalfTilesPerScreenHorizontal; ++RelColumn)
-		{
-			auto Tile = Tilemap::FTilePosition(glm::ivec2(State.CameraPosition.Tile) + glm::ivec2{ RelColumn, RelRow }, State.CameraPosition.Tile.z);
-			auto TileID = Tilemap::GetTileValue(Tilemap, Tile);
-
-			if (TileID != Tilemap::ETileType::Invalid && TileID != Tilemap::ETileType::Empty)
-			{
-				auto DrawSize = glm::vec2(World.TileWidthInPixels) - World.Padding * 2.0f;
-				auto DrawPosition = World.DrawPosition;
-				// Account for the 0,0 position of the tile is at the center now
-				DrawPosition.x -= Tilemap.TileWidthInMeter * World.PixelsPerMeter * 0.5f;
-				DrawPosition.y += Tilemap.TileWidthInMeter * World.PixelsPerMeter * 0.5f;
-				// Account for the player position as everything is drawn relative to the player
-				// DrawPosition -= (State.PlayerPosition.Local * World.PixelsPerMeter) * glm::vec2(1.0f, -1.0f);
-				DrawPosition += (glm::vec2(RelColumn, RelRow) * World.TileWidthInPixels + World.Padding) * glm::vec2(1.0f, -1.0f);
-				DrawPosition += DrawSize * glm::vec2(0.0f, -1.0f);
-
-				auto Color = glm::vec3(0);
-				switch (TileID)
-				{
-					case Tilemap::ETileType::Wall:
-					{
-						Color = glm::vec3(1);
-						if (State.CameraPosition.Tile.z == 1)
-						{
-							Color = glm::vec3(0.07f, 0.15f, 0.18f);
-						}
-						break;
-					}
-					case Tilemap::ETileType::Uninitialized:
-					{
-						Color = glm::vec3(0.5f);
-						break;
-					}
-					case Tilemap::ETileType::StairUp:
-					{
-						Color = glm::vec3(1, 1, 0);
-						break;
-					}
-					case Tilemap::ETileType::StairDown:
-					{
-						Color = glm::vec3(0, 1, 1);
-						break;
-					}
-					default:
-					{
-						Color = glm::vec3(0.f);
-						break;
-					}
-				}
-				DrawRect(Buffer, DrawPosition, DrawPosition + DrawSize, Color);
-
-#if defined(RE_INTERNAL)
-				// Debug draws
-				{
-					// DrawRect(Buffer, DrawPosition, DrawPosition + 1.0f, { 1, 0, 0 });
-					// DrawRect(Buffer, DrawPosition - World.Padding * 2.0f, DrawPosition, { 1, 1, 0 });
-				}
-#endif
-			}
-		}
-	}
-
-	// Draw Player
-	for (auto [entity, Player] : PlayerView.each())
-	{
-		auto DrawSize = State.PlayerSize * World.PixelsPerMeter;
-		auto DrawPosition = World.DrawPosition;
-		DrawPosition -= (glm::vec2(State.CameraPosition.Tile) * World.TileWidthInPixels) * glm::vec2(1.0f, -1.0f);
-		DrawPosition += (glm::vec2(Player.Position.Tile) * World.TileWidthInPixels) * glm::vec2(1.0f, -1.0f);
-		DrawPosition += (Player.Position.Local * World.PixelsPerMeter) * glm::vec2(1.0f, -1.0f);
-
-#if defined(RE_INTERNAL) && 0
-		// Draw the tile player is on
-		{
-			auto DebugDrawSize = glm::vec2(World.TileWidthInPixels);
-			auto DebugDrawPosition = DrawPosition;
-			// Account for the 0,0 position of the tile is at the center now
-			DebugDrawPosition.x -= Tilemap.TileWidthInMeter * World.PixelsPerMeter * 0.5f;
-			DebugDrawPosition.y += Tilemap.TileWidthInMeter * World.PixelsPerMeter * 0.5f;
-			// Account for the player position as everything is drawn relative to the player
-			DebugDrawPosition -= (Player.Position.Local * World.PixelsPerMeter) * glm::vec2(1.0f, -1.0f);
-			DebugDrawPosition += DebugDrawSize * glm::vec2(0.0f, -1.0f);
-			DrawRect(Buffer, DebugDrawPosition, DebugDrawPosition + DebugDrawSize, glm::vec3{ 0.3f, 0.8f, 0.1f });
-		}
-#endif
-
-#if defined(RE_INTERNAL) && 1
-		// Draw player collision
-		DrawRect(Buffer, DrawPosition - DrawSize * glm::vec2(0.5f), DrawPosition + DrawSize * glm::vec2(0.5f), glm::vec3(0.65f, 0.08f, 0.15f));
-#endif
 		u32 index = 0;
-		if (glm::abs(Player.Velocity.x) < 0.1f && glm::abs(Player.Velocity.y) < 0.1f)
+		if (glm::abs(Movement.Velocity.x) < 0.1f && glm::abs(Movement.Velocity.y) < 0.1f)
 		{
 			index = (u32)(glm::round(State.PlayerSpriteIdleIndex)) % State.PlayerSpriteIdle.size();
-			DrawImage(Buffer, DrawPosition, DrawPosition + DrawSize, State.PlayerSpriteIdle[index]);
+			Draw.Sprite = &State.PlayerSpriteIdle[index];
 		}
 		else
 		{
-			if (glm::abs(Player.Velocity.x) > glm::abs(Player.Velocity.y))
+			if (glm::abs(Movement.Velocity.x) > glm::abs(Movement.Velocity.y))
 			{
-				if (Player.Velocity.x > 0)
+				if (Movement.Velocity.x > 0)
 				{
 					index = (u32)(glm::round(State.PlayerSpriteMoveIndex)) % State.PlayerSpriteMoveRight.size();
-					DrawImage(Buffer, DrawPosition, DrawPosition + DrawSize, State.PlayerSpriteMoveRight[index]);
+					Draw.Sprite = &State.PlayerSpriteMoveRight[index];
 				}
 				else
 				{
 					index = (u32)(glm::round(State.PlayerSpriteMoveIndex)) % State.PlayerSpriteMoveLeft.size();
-					DrawImage(Buffer, DrawPosition, DrawPosition + DrawSize, State.PlayerSpriteMoveLeft[index]);
+					Draw.Sprite = &State.PlayerSpriteMoveLeft[index];
 				}
 			}
 			else
 			{
-				if (Player.Velocity.y > 0)
+				if (Movement.Velocity.y > 0)
 				{
 					index = (u32)(glm::round(State.PlayerSpriteMoveIndex)) % State.PlayerSpriteMoveUp.size();
-					DrawImage(Buffer, DrawPosition, DrawPosition + DrawSize, State.PlayerSpriteMoveUp[index]);
+					Draw.Sprite = &State.PlayerSpriteMoveUp[index];
 				}
 				else
 				{
 					index = (u32)(glm::round(State.PlayerSpriteMoveIndex)) % State.PlayerSpriteMoveDown.size();
-					DrawImage(Buffer, DrawPosition, DrawPosition + DrawSize, State.PlayerSpriteMoveDown[index]);
+					Draw.Sprite = &State.PlayerSpriteMoveDown[index];
 				}
+			}
+		}
+	}
+
+	if (State.CameraTarget.entity() != entt::null && State.CameraTarget.all_of<Comp::FTransform, Comp::FTileTransform>())
+	{
+		auto& TileTransform = State.CameraTarget.get<Comp::FTileTransform>();
+
+		// Switch between smooth scrolling and fixed camera position
+#if 1
+		auto NewCamPos = Tilemap::FTilePosition(
+			(glm::uvec2(TileTransform.Position.Tile) / World.ScreenTileDim) * World.ScreenTileDim + World.ScreenTileDimHalf, TileTransform.Position.Tile.z);
+		SetCamera(State, { NewCamPos, { 0.0f, 0.0f } });
+#else
+		SetCamera(State, TileTransform.Position);
+#endif
+	}
+
+	// Clear screen
+	DrawRect(Buffer, glm::vec2{ 0.0f, 0.0f }, glm::vec2{ Buffer.Width, Buffer.Height }, glm::vec3{ 0.08f, 0.17f, 0.85f });
+
+	DrawImage(Buffer, glm::vec2{ 0, 0 }, glm::vec2{ State.BgSprite.Texture->Width, State.BgSprite.Texture->Height }, State.BgSprite);
+
+	// Collision draw
+#if defined(RE_INTERNAL) && 0
+	auto DrawDebugView = State.Registry.view<Comp::FTransform, Comp::FTileTransform, Comp::FCollider>();
+	for (auto [entity, Transform, TileTransform, Collider] : DrawDebugView.each())
+	{
+		if (TileTransform.Position.Tile.z == State.CameraPosition.Tile.z)
+		{
+			auto ColDrawSize = Collider.Size * World.PixelsPerMeter;
+			auto DrawPosition = World.DrawPosition + glm::vec2(Transform.Position) * World.PixelsPerMeter * glm::vec2(1.0f, -1.0f);
+			DrawRect(Buffer, DrawPosition - ColDrawSize * glm::vec2(0.5f), DrawPosition + ColDrawSize * glm::vec2(0.5f), glm::vec3(0.25f, 0.65f, 0.1f));
+		}
+	}
+#endif
+
+	// main draw
+	auto DrawView = State.Registry.view<Comp::FTransform, Comp::FTileTransform, Comp::FSize, Comp::FDraw>();
+	for (auto [entity, Transform, TileTransform, Size, Draw] : DrawView.each())
+	{
+		if (TileTransform.Position.Tile.z == State.CameraPosition.Tile.z)
+		{
+			auto DrawSize = Size.Size * World.PixelsPerMeter - glm::vec2(2);
+			auto DrawPosition = World.DrawPosition + glm::vec2(Transform.Position) * World.PixelsPerMeter * glm::vec2(1.0f, -1.0f);
+
+			if (!Draw.Sprite)
+			{
+				DrawRect(Buffer, DrawPosition - DrawSize * glm::vec2(0.5f), DrawPosition + DrawSize * glm::vec2(0.5f), Draw.Color);
+			}
+			else
+			{
+				DrawImage(Buffer, DrawPosition, DrawPosition + DrawSize, *Draw.Sprite);
 			}
 		}
 	}
