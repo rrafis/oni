@@ -20,10 +20,24 @@ namespace Engine
 	enum class EObjectType : u32
 	{
 		Uninitialized = 0,
-		Empty = 1,
-		Wall = 2,
-		StairUp = 3,
-		StairDown = 4,
+		Empty,
+		Wall,
+		StairUp,
+		StairDown,
+		WallTopLeft,
+		WallTopRight,
+		WallBottomLeft,
+		WallBottomRight,
+		WallHorizontalCenter,
+		WallHorizontalTopLeft,
+		WallHorizontalTopRight,
+		WallHorizontalBottomLeft,
+		WallHorizontalBottomRight,
+		WallVerticalCenter,
+		WallVerticalTopLeft,
+		WallVerticalTopRight,
+		WallVerticalBottomLeft,
+		WallVerticalBottomRight,
 
 		Invalid = UINT32_MAX
 	};

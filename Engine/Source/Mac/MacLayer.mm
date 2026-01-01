@@ -461,8 +461,8 @@ auto GameModuleChanged(FGameModule& GameModule) -> bool
 		free(_offscreenBuffer.Backbuffer);
 	}
 
-	_offscreenBuffer.Width = _metalLayer.drawableSize.width;
-	_offscreenBuffer.Height = _metalLayer.drawableSize.height;
+	_offscreenBuffer.Width = 32 * 21;//_metalLayer.drawableSize.width;
+	_offscreenBuffer.Height = 32 * 15;//_metalLayer.drawableSize.height;
 	_offscreenBuffer.BytesPerPixel = 4;
 	_offscreenBuffer.Backbuffer = (u8*)malloc(_offscreenBuffer.Width * _offscreenBuffer.Height * _offscreenBuffer.BytesPerPixel);
 

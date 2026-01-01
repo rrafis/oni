@@ -56,10 +56,9 @@ namespace Comp
 		glm::vec2 Size;
 	};
 
-	struct FDraw
+	struct FDrawSprite
 	{
-		glm::vec3 Color;
-		FSprite* Sprite;
+		FSprite Sprite;
 	};
 
 	struct FWorldTransform
@@ -78,7 +77,7 @@ namespace Comp
 		bool bCollide;
 	};
 
-	constexpr u64 SizeOfComponents = sizeof(FPlayer) + sizeof(FTransform) + sizeof(FMovement) + sizeof(FSize) + sizeof(FDraw) + sizeof(FWorldTransform)
+	constexpr u64 SizeOfComponents = sizeof(FPlayer) + sizeof(FTransform) + sizeof(FMovement) + sizeof(FSize) + sizeof(FDrawSprite) + sizeof(FWorldTransform)
 		+ sizeof(FTeleport) + sizeof(FCollider);
 } // namespace Comp
 
@@ -100,9 +99,11 @@ struct FGameState
 
 	FImage BackgroundTexture;
 	FImage PlayerTexture;
+	FImage WallTexture;
 
 	FSprite BgSprite;
 	std::array<FSprite, 4> PlayerSpriteIdle;
+	FSprite WallSprite;
 
 	std::array<FSprite, 6> PlayerSpriteMoveDown;
 	std::array<FSprite, 6> PlayerSpriteMoveRight;
@@ -155,6 +156,13 @@ auto LoadImage(FImage& Image, const char* path) -> i32
 		u8 g = SRGBToUnorm8(data[index + 1]);
 		u8 b = SRGBToUnorm8(data[index + 2]);
 		u8 a = SRGBToUnorm8(data[index + 3]);
+
+		// HACK: Sprites have this color as background, set it transparent on load?
+		if (r == 74 && g == 127 && b == 214 && a == 255)
+		{
+			a = 0;
+		}
+
 		*Pixel++ = a << 24 | r << 16 | g << 8 | b << 0;
 	}
 
@@ -189,10 +197,9 @@ auto AddPlayer(FGameState& State, const glm::ivec3& TilePos) -> void
 	MovementComp.PlayerAccelerationRate = 250.0f;
 
 	auto& SizeComp = Entity.emplace<Comp::FSize>();
-	SizeComp.Size = glm::vec2{ 0.65f, 0.9f };
+	SizeComp.Size = glm::vec2{ 1.0f, 1.3f };
 
-	auto& DrawComp = Entity.emplace<Comp::FDraw>();
-	DrawComp.Color = glm::vec3(0.8f, 0.15f, 0.85f);
+	auto& DrawComp = Entity.emplace<Comp::FDrawSprite>();
 
 	auto& ColliderComp = Entity.emplace<Comp::FCollider>();
 	ColliderComp.Size = SizeComp.Size;
@@ -218,7 +225,8 @@ auto AddWall(FGameState& State, const glm::ivec3& TilePos, const glm::vec2& Size
 	auto& SizeComp = Entity.emplace<Comp::FSize>();
 	SizeComp.Size = Size;
 
-	auto& DrawComp = Entity.emplace<Comp::FDraw>();
+	auto& DrawComp = Entity.emplace<Comp::FDrawSprite>();
+	DrawComp.Sprite = State.WallSprite;
 
 	if (Type == Engine::EObjectType::StairDown)
 	{
@@ -236,7 +244,7 @@ auto AddWall(FGameState& State, const glm::ivec3& TilePos, const glm::vec2& Size
 		ColliderComp.Size = SizeComp.Size;
 		ColliderComp.bCollide = false;
 	}
-	else if (Type == Engine::EObjectType::Wall)
+	else if (Type != Engine::EObjectType::Uninitialized && Type != Engine::EObjectType::Empty && Type != Engine::EObjectType::Invalid)
 	{
 		auto& ColliderComp = Entity.emplace<Comp::FCollider>();
 		ColliderComp.Size = SizeComp.Size;
@@ -245,33 +253,107 @@ auto AddWall(FGameState& State, const glm::ivec3& TilePos, const glm::vec2& Size
 
 	switch (Type)
 	{
-		case Engine::EObjectType::Wall:
+		case Engine::EObjectType::WallTopRight:
 		{
-			DrawComp.Color = glm::vec3(1);
-			if (TilePos.z % 2 == 1)
-			{
-				DrawComp.Color = glm::vec3(0.07f, 0.15f, 0.18f);
-			}
+			DrawComp.Sprite.Min.x = 3 * 32;
+			DrawComp.Sprite.Max.x += DrawComp.Sprite.Min.x;
 			break;
 		}
-		case Engine::EObjectType::Uninitialized:
+		case Engine::EObjectType::WallTopLeft:
 		{
-			DrawComp.Color = glm::vec3(0.5f);
+			DrawComp.Sprite.Min.x = 6 * 32;
+			DrawComp.Sprite.Max.x += DrawComp.Sprite.Min.x;
+			break;
+		}
+		case Engine::EObjectType::WallBottomRight:
+		{
+			DrawComp.Sprite.Min.x = 9 * 32;
+			DrawComp.Sprite.Max.x += DrawComp.Sprite.Min.x;
+			break;
+		}
+		case Engine::EObjectType::WallBottomLeft:
+		{
+			DrawComp.Sprite.Max.x = 9 * 32;
+			DrawComp.Sprite.Min.x += DrawComp.Sprite.Max.x + 32;
+			break;
+		}
+		case Engine::EObjectType::WallHorizontalCenter:
+		{
+			DrawComp.Sprite.Min.x = 5 * 32;
+			DrawComp.Sprite.Max.x += DrawComp.Sprite.Min.x;
+			break;
+		}
+		case Engine::EObjectType::WallHorizontalTopLeft:
+		{
+			DrawComp.Sprite.Min.x = 9 * 32;
+			DrawComp.Sprite.Max.x += DrawComp.Sprite.Min.x;
+			break;
+		}
+		case Engine::EObjectType::WallHorizontalTopRight:
+		{
+			DrawComp.Sprite.Max.x = 9 * 32;
+			DrawComp.Sprite.Min.x += DrawComp.Sprite.Max.x + 32;
+			break;
+		}
+		case Engine::EObjectType::WallHorizontalBottomLeft:
+		{
+			DrawComp.Sprite.Min.x = 3 * 32;
+			DrawComp.Sprite.Max.x += DrawComp.Sprite.Min.x;
+			break;
+		}
+		case Engine::EObjectType::WallHorizontalBottomRight:
+		{
+			DrawComp.Sprite.Min.x = 6 * 32;
+			DrawComp.Sprite.Max.x += DrawComp.Sprite.Min.x;
+			break;
+		}
+		case Engine::EObjectType::WallVerticalCenter:
+		{
+			DrawComp.Sprite.Min.x = 10 * 32;
+			DrawComp.Sprite.Max.x += DrawComp.Sprite.Min.x;
+			break;
+		}
+		case Engine::EObjectType::WallVerticalBottomLeft:
+		{
+			DrawComp.Sprite.Max.x = 9 * 32;
+			DrawComp.Sprite.Min.x += DrawComp.Sprite.Max.x + 32;
+			break;
+		}
+		case Engine::EObjectType::WallVerticalBottomRight:
+		{
+			DrawComp.Sprite.Min.x = 9 * 32;
+			DrawComp.Sprite.Max.x += DrawComp.Sprite.Min.x;
+			break;
+		}
+		case Engine::EObjectType::WallVerticalTopRight:
+		{
+			DrawComp.Sprite.Min.x = 3 * 32;
+			DrawComp.Sprite.Max.x += DrawComp.Sprite.Min.x;
+			break;
+		}
+		case Engine::EObjectType::WallVerticalTopLeft:
+		{
+			DrawComp.Sprite.Min.x = 6 * 32;
+			DrawComp.Sprite.Max.x += DrawComp.Sprite.Min.x;
 			break;
 		}
 		case Engine::EObjectType::StairUp:
 		{
-			DrawComp.Color = glm::vec3(1, 0, 0);
+			DrawComp.Sprite.Min.x = 16 * 32;
+			DrawComp.Sprite.Max.x += DrawComp.Sprite.Min.x;
 			break;
 		}
 		case Engine::EObjectType::StairDown:
 		{
-			DrawComp.Color = glm::vec3(0, 0, 1);
+			DrawComp.Sprite.Min.x = 16 * 32;
+			DrawComp.Sprite.Max.x += DrawComp.Sprite.Min.x;
+			DrawComp.Sprite.Min.y = 32;
+			DrawComp.Sprite.Max.y = 0;
+			DrawComp.Sprite.Pivot.y = 20;
 			break;
 		}
 		default:
 		{
-			DrawComp.Color = glm::vec3(0.f);
 			break;
 		}
 	}
@@ -382,29 +464,98 @@ auto GenerateTilemap(FGameState& State, u32 ScreenCount) -> void
 				glm::ivec3 TilePosition(Screen.ScreenPos * ScreenTileDim + Tile, Screen.ScreenZ);
 				Engine::EObjectType TileValue = Engine::EObjectType::Empty;
 
-				if (TileY == -ScreenTileDimHalf.y || TileY == ScreenTileDimHalf.y)
+				if ((TileX == -ScreenTileDimHalf.x || TileX == ScreenTileDimHalf.x) && (TileY == -ScreenTileDimHalf.y || TileY == ScreenTileDimHalf.y))
 				{
-					TileValue = Engine::EObjectType::Wall;
-					if (Screen.doorBottom && TileY == -ScreenTileDimHalf.y && TileX >= -1 && TileX <= +1)
+					if (TileY == ScreenTileDimHalf.y)
 					{
-						TileValue = Engine::EObjectType::Empty;
+						if (TileX == ScreenTileDimHalf.x)
+							TileValue = Engine::EObjectType::WallTopLeft;
+						else
+							TileValue = Engine::EObjectType::WallTopRight;
 					}
-					if (Screen.doorTop && TileY == ScreenTileDimHalf.y && TileX >= -1 && TileX <= +1)
+					else
 					{
-						TileValue = Engine::EObjectType::Empty;
+						if (TileX == ScreenTileDimHalf.x)
+							TileValue = Engine::EObjectType::WallBottomLeft;
+						else
+							TileValue = Engine::EObjectType::WallBottomRight;
 					}
 				}
-
-				if (TileX == -ScreenTileDimHalf.x || TileX == ScreenTileDimHalf.x)
+				else
 				{
-					TileValue = Engine::EObjectType::Wall;
-					if (Screen.doorRight && TileX == ScreenTileDimHalf.x && TileY >= -1 && TileY <= +1)
+					if ((TileX == -ScreenTileDimHalf.x || TileX == ScreenTileDimHalf.x))
 					{
-						TileValue = Engine::EObjectType::Empty;
+						TileValue = Engine::EObjectType::WallVerticalCenter;
+						if ((Screen.doorRight && TileX == ScreenTileDimHalf.x) || (Screen.doorLeft && TileX == -ScreenTileDimHalf.x))
+						{
+							if (TileY == -2 || TileY == +2)
+							{
+								if (TileY == -2)
+								{
+									if (TileX == ScreenTileDimHalf.x)
+										TileValue = Engine::EObjectType::WallVerticalTopRight;
+									else
+										TileValue = Engine::EObjectType::WallVerticalTopLeft;
+								}
+								else if (TileY == 2)
+								{
+									if (TileX == ScreenTileDimHalf.x)
+										TileValue = Engine::EObjectType::WallVerticalBottomRight;
+									else
+										TileValue = Engine::EObjectType::WallVerticalBottomLeft;
+								}
+							}
+							else
+							{
+								TileValue = Engine::EObjectType::WallVerticalCenter;
+							}
+						}
+
+						if (Screen.doorRight && TileX == ScreenTileDimHalf.x && TileY >= -1 && TileY <= +1)
+						{
+							TileValue = Engine::EObjectType::Empty;
+						}
+						if (Screen.doorLeft && TileX == -ScreenTileDimHalf.x && TileY >= -1 && TileY <= +1)
+						{
+							TileValue = Engine::EObjectType::Empty;
+						}
 					}
-					if (Screen.doorLeft && TileX == -ScreenTileDimHalf.x && TileY >= -1 && TileY <= +1)
+					if (TileY == -ScreenTileDimHalf.y || TileY == ScreenTileDimHalf.y)
 					{
-						TileValue = Engine::EObjectType::Empty;
+						TileValue = Engine::EObjectType::WallHorizontalCenter;
+						if ((Screen.doorTop && TileY == ScreenTileDimHalf.y) || (Screen.doorBottom && TileY == -ScreenTileDimHalf.y))
+						{
+							if (TileX == -2 || TileX == +2)
+							{
+								if (TileY == ScreenTileDimHalf.y)
+								{
+									if (TileX == -2)
+										TileValue = Engine::EObjectType::WallHorizontalTopRight;
+									else
+										TileValue = Engine::EObjectType::WallHorizontalTopLeft;
+								}
+								else if (TileY == -ScreenTileDimHalf.y)
+								{
+									if (TileX == -2)
+										TileValue = Engine::EObjectType::WallHorizontalBottomRight;
+									else
+										TileValue = Engine::EObjectType::WallHorizontalBottomLeft;
+								}
+							}
+							else
+							{
+								TileValue = Engine::EObjectType::WallHorizontalCenter;
+							}
+						}
+
+						if (Screen.doorBottom && TileY == -ScreenTileDimHalf.y && TileX >= -1 && TileX <= +1)
+						{
+							TileValue = Engine::EObjectType::Empty;
+						}
+						if (Screen.doorTop && TileY == ScreenTileDimHalf.y && TileX >= -1 && TileX <= +1)
+						{
+							TileValue = Engine::EObjectType::Empty;
+						}
 					}
 				}
 
@@ -487,13 +638,30 @@ RE_API auto GameInitialize(FGameMemory& Memory) -> void
 	State.yOffset = 0;
 	State.OffsetSpeed = 2 * 255.f;
 
+	State.BackgroundTexture.Pixels = (u32*)Memory.TempStorage;
+	LoadImage(State.BackgroundTexture, "test/background.png");
+	State.BgSprite = FSprite{ .Texture = &State.BackgroundTexture, .Max = { State.BackgroundTexture.Width, State.BackgroundTexture.Height } };
+
+	State.PlayerTexture.Pixels =
+		(u32*)((u8*)State.BackgroundTexture.Pixels + State.BackgroundTexture.Width * State.BackgroundTexture.Height * State.BackgroundTexture.Channels);
+	LoadImage(State.PlayerTexture, "test/link_atlas.png");
+
+	// 18x24
+	State.WallTexture.Pixels = (u32*)((u8*)State.PlayerTexture.Pixels + State.PlayerTexture.Width * State.PlayerTexture.Height * State.PlayerTexture.Channels);
+	LoadImage(State.WallTexture, "test/HyruleCastleHedge.png");
+
+	State.WallSprite.Texture = &State.WallTexture;
+	State.WallSprite.Min = { 0 * 32, 0 };
+	State.WallSprite.Max = State.WallSprite.Min + glm::uvec2{ 32, 32 };
+	State.WallSprite.Pivot = { 16, 13 };
+
 	usize WorldArenaSize = Memory.PermanentStorageSize - sizeof(FGameState);
 	void* WorldArenaPointer = (u8*)Memory.PermanentStorage + sizeof(FGameState);
 	Memory::Arena::Initialize(State.WorldArena, WorldArenaSize, WorldArenaPointer);
 
 	State.World.TileWidthInMeter = 1.5f;
 	State.World.ChunkSize = glm::uvec2(16);
-	State.World.TileWidthInPixels = 60;
+	State.World.TileWidthInPixels = 32;
 	State.World.PixelsPerMeter = State.World.TileWidthInPixels / State.World.TileWidthInMeter;
 
 	State.World.ScreenTileDim = glm::ivec2(21, 15);
@@ -507,61 +675,53 @@ RE_API auto GameInitialize(FGameMemory& Memory) -> void
 
 	SetCamera(State, Engine::CreateWorldPosition(State.World, { 0, 0, 0 }));
 
-	State.BackgroundTexture.Pixels = (u32*)Memory.TempStorage;
-	LoadImage(State.BackgroundTexture, "test/background.png");
-	State.BgSprite = FSprite{ .Texture = &State.BackgroundTexture, .Max = { State.BackgroundTexture.Width, State.BackgroundTexture.Height } };
-
-	State.PlayerTexture.Pixels =
-		(u32*)((u8*)Memory.TempStorage + State.BackgroundTexture.Width * State.BackgroundTexture.Height * State.BackgroundTexture.Channels);
-	LoadImage(State.PlayerTexture, "test/link_atlas.png");
-
 	u32 Base = 740 * 2 + 1;
 	// Player Idle
 	{
 		glm::uvec2 BaseOffset = { Base, 21 };
-		glm::uvec2 BaseSize = { 24, 33 };
-		glm::uvec2 BasePivot = BaseSize / glm::uvec2(2);
+		glm::uvec2 BaseSize = { 24, 32 };
+		glm::uvec2 BasePivot = glm::uvec2(12, 16);
 		auto BaseSprite = FSprite{ .Texture = &State.PlayerTexture, .Pivot = BasePivot };
 		for (u32 i = 0; i < State.PlayerSpriteIdle.size(); i++)
 		{
 			State.PlayerSpriteIdle[i] = BaseSprite;
 			State.PlayerSpriteIdle[i].Min = BaseOffset + (BaseSize + glm::uvec2{ 1, 0 }) * glm::uvec2(i, 0);
-			State.PlayerSpriteIdle[i].Max = State.PlayerSpriteIdle[i].Min + BaseSize;
+			State.PlayerSpriteIdle[i].Max = State.PlayerSpriteIdle[i].Min + BaseSize + glm::uvec2(-1, 0);
 		}
 	}
 
 	// Player move down
 	{
 		glm::uvec2 BaseOffset = { 324 + Base, 21 };
-		glm::uvec2 BaseSize = { 23, 35 };
+		glm::uvec2 BaseSize = { 23, 34 };
 		glm::uvec2 BasePivot = BaseSize / glm::uvec2(2);
 		auto BaseSprite = FSprite{ .Texture = &State.PlayerTexture, .Pivot = BasePivot };
 		for (u32 i = 0; i < State.PlayerSpriteMoveDown.size(); i++)
 		{
 			State.PlayerSpriteMoveDown[i] = BaseSprite;
 			State.PlayerSpriteMoveDown[i].Min = BaseOffset + (BaseSize + glm::uvec2{ 1, 0 }) * glm::uvec2(i, 0);
-			State.PlayerSpriteMoveDown[i].Max = State.PlayerSpriteMoveDown[i].Min + BaseSize;
+			State.PlayerSpriteMoveDown[i].Max = State.PlayerSpriteMoveDown[i].Min + BaseSize + glm::uvec2(-1, 0);
 		}
 	}
 
 	// Player move right
 	{
 		glm::uvec2 BaseOffset = { 324 + Base, 21 + 1 + 35 };
-		glm::uvec2 BaseSize = { 24, 33 };
+		glm::uvec2 BaseSize = { 24, 32 };
 		glm::uvec2 BasePivot = BaseSize / glm::uvec2(2);
 		auto BaseSprite = FSprite{ .Texture = &State.PlayerTexture, .Pivot = BasePivot };
 		for (u32 i = 0; i < State.PlayerSpriteMoveRight.size(); i++)
 		{
 			State.PlayerSpriteMoveRight[i] = BaseSprite;
 			State.PlayerSpriteMoveRight[i].Min = BaseOffset + (BaseSize + glm::uvec2{ 1, 0 }) * glm::uvec2(i, 0);
-			State.PlayerSpriteMoveRight[i].Max = State.PlayerSpriteMoveRight[i].Min + BaseSize;
+			State.PlayerSpriteMoveRight[i].Max = State.PlayerSpriteMoveRight[i].Min + BaseSize + glm::uvec2(-1, 0);
 		}
 	}
 
 	// Player move left
 	{
 		glm::uvec2 BaseOffset = { 324 + Base, 21 + 1 + 35 };
-		glm::uvec2 BaseSize = { 24, 33 };
+		glm::uvec2 BaseSize = { 24, 32 };
 		glm::uvec2 BasePivot = BaseSize / glm::uvec2(2);
 		auto BaseSprite = FSprite{ .Texture = &State.PlayerTexture, .Pivot = BasePivot };
 		for (u32 i = 0; i < State.PlayerSpriteMoveLeft.size(); i++)
@@ -569,22 +729,22 @@ RE_API auto GameInitialize(FGameMemory& Memory) -> void
 			State.PlayerSpriteMoveLeft[i] = BaseSprite;
 			State.PlayerSpriteMoveLeft[i].Min = BaseOffset + (BaseSize + glm::uvec2{ 1, 0 }) * glm::uvec2(i, 0);
 			State.PlayerSpriteMoveLeft[i].Max = State.PlayerSpriteMoveLeft[i].Min + BaseSize;
-			State.PlayerSpriteMoveLeft[i].Min.x += BaseSize.x;
-			State.PlayerSpriteMoveLeft[i].Max.x -= BaseSize.x;
+			State.PlayerSpriteMoveLeft[i].Min.x += BaseSize.x - 1;
+			State.PlayerSpriteMoveLeft[i].Max.x -= BaseSize.x - 1;
 		}
 	}
 
 	// Player move up
 	{
 		glm::uvec2 BaseOffset = { 324 + Base, 21 + 1 + 35 + 1 + 33 };
-		glm::uvec2 BaseSize = { 26, 36 };
+		glm::uvec2 BaseSize = { 26, 35 };
 		glm::uvec2 BasePivot = BaseSize / glm::uvec2(2);
 		auto BaseSprite = FSprite{ .Texture = &State.PlayerTexture, .Pivot = BasePivot };
 		for (u32 i = 0; i < State.PlayerSpriteMoveUp.size(); i++)
 		{
 			State.PlayerSpriteMoveUp[i] = BaseSprite;
 			State.PlayerSpriteMoveUp[i].Min = BaseOffset + (BaseSize + glm::uvec2{ 1, 0 }) * glm::uvec2(i, 0);
-			State.PlayerSpriteMoveUp[i].Max = State.PlayerSpriteMoveUp[i].Min + BaseSize;
+			State.PlayerSpriteMoveUp[i].Max = State.PlayerSpriteMoveUp[i].Min + BaseSize + glm::uvec2(-1, 0);
 		}
 	}
 }
@@ -626,6 +786,13 @@ auto DrawImage(FOffscreenBuffer& Buffer, glm::vec2 InMin, glm::vec2 InMax, const
 		SpriteXMin = Sprite.Max.x;
 		SpriteXMax = Sprite.Min.x;
 	}
+	auto SpriteYMin = Sprite.Min.y;
+	auto SpriteYMax = Sprite.Max.y;
+	if (Sprite.Min.y > Sprite.Max.y)
+	{
+		SpriteYMin = Sprite.Max.y;
+		SpriteYMax = Sprite.Min.y;
+	}
 
 	glm::ivec2 Min = glm::round(InMin);
 	glm::ivec2 Max = glm::round(InMax);
@@ -635,8 +802,8 @@ auto DrawImage(FOffscreenBuffer& Buffer, glm::vec2 InMin, glm::vec2 InMax, const
 
 	auto OffsetSource = Min;
 
-	Min = glm::clamp(Min, glm::ivec2(0), glm::ivec2(Buffer.Width, Buffer.Height));
-	Max = glm::clamp(Max, glm::ivec2(0), glm::ivec2(Buffer.Width, Buffer.Height));
+	Min = glm::clamp(Min, glm::ivec2(0), glm::ivec2(Buffer.Width - 1, Buffer.Height - 1));
+	Max = glm::clamp(Max, glm::ivec2(0), glm::ivec2(Buffer.Width - 1, Buffer.Height - 1));
 
 	OffsetSource = Min - OffsetSource;
 
@@ -645,26 +812,37 @@ auto DrawImage(FOffscreenBuffer& Buffer, glm::vec2 InMin, glm::vec2 InMax, const
 	u32 BufferX = Min.x;
 	u32 BufferY = Min.y;
 
-	for (u32 Y = Sprite.Min.y + OffsetSource.y; Y < Sprite.Max.y && Y < Sprite.Texture->Height && BufferY < Max.y; ++Y)
+	for (u32 Y = SpriteYMin + OffsetSource.y; Y <= SpriteYMax && Y < Sprite.Texture->Height && BufferY <= Max.y; ++Y)
 	{
 		u32* Pixel = (u32*)Row;
 		BufferX = Min.x;
-		for (u32 X = SpriteXMin + OffsetSource.x; X < SpriteXMax && X < Sprite.Texture->Width && BufferX < Max.x; ++X)
+		for (u32 X = SpriteXMin + OffsetSource.x; X <= SpriteXMax && X < Sprite.Texture->Width && BufferX <= Max.x; ++X)
 		{
 			u32 Color = Sprite.Texture->Pixels[Y * Sprite.Texture->Width + X];
 
 			if (Sprite.Min.x > Sprite.Max.x)
 			{
-				auto offset = Sprite.Max.x + (Sprite.Min.x - X) - 1;
-				Color = Sprite.Texture->Pixels[Y * Sprite.Texture->Width + offset];
+				auto offsetx = Sprite.Max.x + (Sprite.Min.x - X);
+				Color = Sprite.Texture->Pixels[Y * Sprite.Texture->Width + offsetx];
+			}
+			else if (Sprite.Min.y > Sprite.Max.y)
+			{
+				auto offsety = Sprite.Max.y + (Sprite.Min.y - Y);
+				Color = Sprite.Texture->Pixels[offsety * Sprite.Texture->Width + X];
+			}
+			else if (Sprite.Min.x > Sprite.Max.x && Sprite.Min.y > Sprite.Max.y)
+			{
+				auto offsetx = Sprite.Max.x + (Sprite.Min.x - X);
+				auto offsety = Sprite.Max.y + (Sprite.Min.y - Y);
+				Color = Sprite.Texture->Pixels[offsety * Sprite.Texture->Width + offsetx];
 			}
 
 			u8 alpha = Color >> 24 & 0xFF;
-			// HACK: Sprites have this color as background, set it transparent on load?
-			if (Color == 4283072470)
-			{
-				alpha = 0;
-			}
+			// // HACK: Sprites have this color as background, set it transparent on load?
+			// if (Color == 4283072470)
+			// {
+			// 	alpha = 0;
+			// }
 
 			if (alpha != 0)
 			{
@@ -860,14 +1038,14 @@ RE_API auto GameUpdateAndRender(FGameMemory& Memory, f32 DeltaTime, FOffscreenBu
 
 	PlayerMove(State, Gamepad, DeltaTime);
 
-	auto MoveView = State.Registry.view<Comp::FMovement, Comp::FDraw, Comp::FActiveTag>();
+	auto MoveView = State.Registry.view<Comp::FMovement, Comp::FDrawSprite, Comp::FActiveTag>();
 	for (auto [entity, Movement, Draw, ActiveTag] : MoveView.each())
 	{
 		u32 index = 0;
 		if (glm::abs(Movement.Velocity.x) < 0.1f && glm::abs(Movement.Velocity.y) < 0.1f)
 		{
 			index = (u32)(glm::round(State.PlayerSpriteIdleIndex)) % State.PlayerSpriteIdle.size();
-			Draw.Sprite = &State.PlayerSpriteIdle[index];
+			Draw.Sprite = State.PlayerSpriteIdle[index];
 		}
 		else
 		{
@@ -876,12 +1054,12 @@ RE_API auto GameUpdateAndRender(FGameMemory& Memory, f32 DeltaTime, FOffscreenBu
 				if (Movement.Velocity.x > 0)
 				{
 					index = (u32)(glm::round(State.PlayerSpriteMoveIndex)) % State.PlayerSpriteMoveRight.size();
-					Draw.Sprite = &State.PlayerSpriteMoveRight[index];
+					Draw.Sprite = State.PlayerSpriteMoveRight[index];
 				}
 				else
 				{
 					index = (u32)(glm::round(State.PlayerSpriteMoveIndex)) % State.PlayerSpriteMoveLeft.size();
-					Draw.Sprite = &State.PlayerSpriteMoveLeft[index];
+					Draw.Sprite = State.PlayerSpriteMoveLeft[index];
 				}
 			}
 			else
@@ -889,12 +1067,12 @@ RE_API auto GameUpdateAndRender(FGameMemory& Memory, f32 DeltaTime, FOffscreenBu
 				if (Movement.Velocity.y > 0)
 				{
 					index = (u32)(glm::round(State.PlayerSpriteMoveIndex)) % State.PlayerSpriteMoveUp.size();
-					Draw.Sprite = &State.PlayerSpriteMoveUp[index];
+					Draw.Sprite = State.PlayerSpriteMoveUp[index];
 				}
 				else
 				{
 					index = (u32)(glm::round(State.PlayerSpriteMoveIndex)) % State.PlayerSpriteMoveDown.size();
-					Draw.Sprite = &State.PlayerSpriteMoveDown[index];
+					Draw.Sprite = State.PlayerSpriteMoveDown[index];
 				}
 			}
 		}
@@ -932,32 +1110,18 @@ RE_API auto GameUpdateAndRender(FGameMemory& Memory, f32 DeltaTime, FOffscreenBu
 	auto DrawDebugView = State.Registry.view<Comp::FTransform, Comp::FWorldTransform, Comp::FCollider, Comp::FActiveTag>();
 	for (auto [entity, Transform, WorldTransform, Collider, ActiveTag] : DrawDebugView.each())
 	{
-		if (WorldTransform.Position.Chunk.z == State.CameraPosition.Chunk.z)
-		{
-			auto ColDrawSize = Collider.Size * World.PixelsPerMeter;
-			auto DrawPosition = World.DrawPosition + glm::vec2(Transform.Position) * World.PixelsPerMeter * glm::vec2(1.0f, -1.0f);
-			DrawRect(Buffer, DrawPosition - ColDrawSize * glm::vec2(0.5f), DrawPosition + ColDrawSize * glm::vec2(0.5f), glm::vec3(0.25f, 0.65f, 0.1f));
-		}
+		auto ColDrawSize = Collider.Size * State.World.PixelsPerMeter;
+		auto DrawPosition = State.World.DrawPosition + glm::vec2(Transform.Position) * State.World.PixelsPerMeter * glm::vec2(1.0f, -1.0f);
+		DrawRect(Buffer, DrawPosition - ColDrawSize * glm::vec2(0.5f), DrawPosition + ColDrawSize * glm::vec2(0.5f), glm::vec3(0.25f, 0.65f, 0.1f));
 	}
 #endif
 
 	// main draw
-	auto DrawView = State.Registry.view<Comp::FTransform, Comp::FWorldTransform, Comp::FSize, Comp::FDraw, Comp::FActiveTag>();
+	auto DrawView = State.Registry.view<Comp::FTransform, Comp::FWorldTransform, Comp::FSize, Comp::FDrawSprite, Comp::FActiveTag>();
 	for (auto [entity, Transform, WorldTransform, Size, Draw, ActiveTag] : DrawView.each())
 	{
-		{
-			auto DrawSize = Size.Size * State.World.PixelsPerMeter - glm::vec2(2);
-			auto DrawPosition = State.World.DrawPosition + glm::vec2(Transform.Position) * State.World.PixelsPerMeter * glm::vec2(1.0f, -1.0f);
-
-			if (!Draw.Sprite)
-			{
-				DrawRect(Buffer, DrawPosition - DrawSize * glm::vec2(0.5f), DrawPosition + DrawSize * glm::vec2(0.5f), Draw.Color);
-			}
-			else
-			{
-				DrawImage(Buffer, DrawPosition, DrawPosition + DrawSize, *Draw.Sprite);
-			}
-		}
+		auto DrawPosition = State.World.DrawPosition + glm::vec2(Transform.Position) * State.World.PixelsPerMeter * glm::vec2(1.0f, -1.0f);
+		DrawImage(Buffer, DrawPosition, DrawPosition + glm::vec2(Draw.Sprite.Max - Draw.Sprite.Min), Draw.Sprite);
 	}
 
 	// Center of the screen
