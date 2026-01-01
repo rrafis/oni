@@ -4,15 +4,20 @@
 
 #include "GameMath.h"
 
+#include <entt/entt.hpp>
+
+#include <unordered_map>
+#include <vector>
+
 namespace Engine
 {
 	struct FWorldPosition
 	{
-		glm::ivec3 Tile;
+		glm::ivec3 Chunk;
 		glm::vec2 Local;
 	};
 
-	enum class ETileType : u32
+	enum class EObjectType : u32
 	{
 		Uninitialized = 0,
 		Empty = 1,
@@ -23,6 +28,8 @@ namespace Engine
 		Invalid = UINT32_MAX
 	};
 
+	using FChunkStorage = std::vector<entt::handle>;
+	using FChunkMap = std::unordered_map<glm::ivec3, FChunkStorage>;
 	struct FWorld
 	{
 		glm::vec2 DrawPosition; // Upper left corner of the tile map
@@ -30,8 +37,11 @@ namespace Engine
 		f32 TileWidthInMeter;
 		f32 TileWidthInPixels;
 		f32 PixelsPerMeter;
+		glm::uvec2 ChunkSize;
 
 		glm::ivec2 ScreenTileDim;
 		glm::ivec2 ScreenTileDimHalf;
+
+		FChunkMap Chunks;
 	};
 } // namespace Engine

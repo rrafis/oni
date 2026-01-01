@@ -3,7 +3,10 @@
 #include "PlatformTypes.h"
 
 #define GLM_FORCE_INTRINSICS
+#define GLM_GTX_hash
+#define GLM_ENABLE_EXPERIMENTAL
 #include <glm/glm.hpp>
+#include <glm/gtx/hash.hpp>
 
 static_assert(sizeof(glm::uvec1) == 4);
 static_assert(sizeof(glm::uvec2) == 8);
@@ -80,6 +83,29 @@ namespace Math
 	}
 
 	inline auto IsInRect(FRect Rect, glm::vec2 Test) -> bool
+	{
+		return (Test >= Rect.Min) && (Test < Rect.Max);
+	}
+
+	struct FCubeInt
+	{
+		glm::ivec3 Min;
+		glm::ivec3 Max;
+	};
+
+	inline auto RectFromMinMax(glm::ivec3 Min, glm::ivec3 Max) -> FCubeInt
+	{
+		return FCubeInt{ .Min = Min, .Max = Max };
+	}
+	inline auto RectFromCenter(glm::ivec3 Center, glm::ivec3 HalfDim) -> FCubeInt
+	{
+		return FCubeInt{ .Min = Center - HalfDim, .Max = Center + HalfDim };
+	}
+	inline auto RectFromLeftTop(glm::ivec3 LeftTop, glm::ivec3 Dim) -> FCubeInt
+	{
+		return FCubeInt{ .Min = LeftTop, .Max = LeftTop + Dim };
+	}
+	inline auto IsInRect(FCubeInt Rect, glm::ivec3 Test) -> bool
 	{
 		return (Test >= Rect.Min) && (Test < Rect.Max);
 	}
