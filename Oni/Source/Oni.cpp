@@ -2,12 +2,14 @@
 
 #include <memory>
 
-// Imple for the metal-cpp
-#define CA_PRIVATE_IMPLEMENTATION
-#define NS_PRIVATE_IMPLEMENTATION
-#define MTL_PRIVATE_IMPLEMENTATION
-#define MTLFX_PRIVATE_IMPLEMENTATION
+#define GLM_FORCE_RADIANS
+#define GLM_FORCE_DEPTH_ZERO_TO_ONE
+#define GLM_FORCE_LEFT_HANDED
+#include <glm/ext/matrix_clip_space.hpp>
+#include <glm/ext/matrix_transform.hpp>
+#include <glm/glm.hpp>
 
+#include "MeshUtils.h"
 #include <Foundation/Foundation.hpp>
 #include <Metal/Metal.hpp>
 #include <MetalFX/MetalFX.hpp>
@@ -24,6 +26,17 @@ struct FGameState
 	u64 PacingTimeStampIndex;
 	u64 MaxFramesInFlight;
 	u64 Frame;
+
+	Engine::FMesh Mesh;
+
+	glm::vec3 CameraPosition;
+	glm::vec3 MeshPosition;
+
+	glm::mat4 Model;
+	glm::mat4 View;
+	glm::mat4 Projection;
+
+	glm::mat4 MVP;
 };
 
 static FGameSurfaceDesc Props;
@@ -54,19 +67,29 @@ RE_API auto GameInitialize(FGameMemory& Memory) -> void
 	State.PacingTimeStampIndex = 0;
 	State.MaxFramesInFlight = 3;
 
+	State.CameraPosition = glm::vec3(0.0f, 0.0f, 1.0f);
+	State.MeshPosition = glm::vec3(3.0f, 3.0f, 10.0f);
+
+	State.Projection = glm::perspectiveFov(glm::radians(60.0f), (f32)Props.Width, (f32)Props.Height, 0.01f, 100.0f);
+	State.View = glm::lookAtLH(State.CameraPosition, State.CameraPosition + glm::vec3(0, 0, 1), glm::vec3(0, 1, 0));
+	State.Model = glm::translate(glm::mat4(1), State.MeshPosition);
+
+	State.MVP = State.Projection * State.View * State.Model;
+
+	State.Mesh = Engine::CreateSphere(State.Device, 1.0f);
+
 	{
 		const char* triShaderSource = "#include <metal_stdlib>\n"
 									  "using namespace metal;\n"
+									  "struct VertexIn {\n"
+									  "    float4 position [[attribute(0)]];\n"
+									  "};\n"
 									  "struct VSOut {\n"
 									  "	float4 position [[position]];\n"
 									  "};\n"
-									  "vertex VSOut vertex_main(uint vid [[vertex_id]]) {\n"
-									  "	float2 pos;\n"
-									  "	if (vid == 0) pos = float2(-0.5, -0.5);\n"
-									  "	if (vid == 1) pos = float2( 0.5, -0.5);\n"
-									  "	if (vid == 2) pos = float2( 0.0,  0.5);\n"
+									  "vertex VSOut vertex_main(const VertexIn in [[stage_in]], constant float4x4 &MVP [[buffer(1)]]) {\n"
 									  "	VSOut out;\n"
-									  "	out.position = float4(pos, 0.0, 1.0);\n"
+									  "	out.position = MVP * in.position;\n"
 									  "	return out;\n"
 									  "}\n"
 									  "fragment float4 fragment_main(VSOut in [[stage_in]]) {\n"
@@ -84,6 +107,7 @@ RE_API auto GameInitialize(FGameMemory& Memory) -> void
 		MTL::RenderPipelineDescriptor* pipeDesc = MTL::RenderPipelineDescriptor::alloc()->init();
 		pipeDesc->setVertexFunction(vertFunc);
 		pipeDesc->setFragmentFunction(fragFunc);
+		pipeDesc->setVertexDescriptor(State.Mesh.VertexDescriptor);
 		pipeDesc->colorAttachments()->object(0)->setPixelFormat(MTL::PixelFormatRGBA16Float);
 		State.Pipeline = State.Device->newRenderPipelineState(pipeDesc, &error);
 	}
@@ -116,7 +140,12 @@ RE_API auto GameUpdateAndRender(FGameMemory& Memory, f32 DeltaTime, FOffscreenBu
 
 		MTL::RenderCommandEncoder* Encoder = Cmd->renderCommandEncoder(State.DrawableRenderPass);
 		Encoder->setRenderPipelineState(State.Pipeline);
-		Encoder->drawPrimitives(MTL::PrimitiveTypeTriangle, NS::UInteger(0), NS::UInteger(3));
+		Encoder->setTriangleFillMode(MTL::TriangleFillModeLines);
+
+		Encoder->setVertexBuffer(State.Mesh.VertexBuffer, 0, 0);
+		Encoder->setVertexBytes(&State.MVP, sizeof(State.MVP), 1);
+		Encoder->drawIndexedPrimitives(MTL::PrimitiveTypeTriangle, State.Mesh.IndexCount, State.Mesh.IndexType, State.Mesh.IndexBuffer, 0);
+
 		Encoder->endEncoding();
 	}
 

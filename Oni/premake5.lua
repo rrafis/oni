@@ -19,7 +19,7 @@ project "Oni"
 	}
 
 	files {
-		"Source/Oni.cpp",
+		"Source/**.*",
 	}
 
 	filter "platforms:Mac"
@@ -33,6 +33,8 @@ project "Oni"
 			"Metal.framework",
 			"MetalFX.framework",
 			"QuartzCore.framework",
+			"ModelIO.framework",
+			"MetalKit.framework",
 		}
 	filter {}
 
