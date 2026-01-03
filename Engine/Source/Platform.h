@@ -47,6 +47,8 @@ struct FGameSurfaceDesc
 	const char* Title = "RE Engine";
 	const char* Name = "REEngineMain";
 	const char* IconPath = "";
+
+	bool bUseOffscreenBuffer = false;
 };
 
 struct FInputButtonState
@@ -95,6 +97,7 @@ struct FOffscreenBuffer
 	u32 Width;
 	u32 Height;
 	u8 BytesPerPixel;
+	void* Drawable;
 };
 
 struct FGameMemory

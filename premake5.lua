@@ -57,3 +57,4 @@ workspace "RE"
 
 include "Engine/premake5.lua"
 include "Testbed/premake5.lua"
+include "Oni/premake5.lua"

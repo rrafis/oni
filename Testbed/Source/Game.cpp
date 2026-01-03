@@ -116,6 +116,7 @@ RE_API auto GameGetSurfaceDesc() -> FGameSurfaceDesc*
 	Props.Height = 900.f;
 	Props.bCenterd = true;
 	Props.Title = "Testbed Window";
+	Props.bUseOffscreenBuffer = true;
 
 	return &Props;
 }

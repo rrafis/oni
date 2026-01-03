@@ -10,13 +10,24 @@
 
 #include <mach/mach_init.h>
 #include <mach/mach_vm.h>
-// #include <mach/task.h>
+
+#include <thread>
 
 #include <dlfcn.h>
 
 using FGameSurfaceDescFunc = FGameSurfaceDesc* (*)();
 using FGameInitializeFunc = void (*)(FGameMemory&);
 using FGameUpdateAndRenderFunc = void (*)(FGameMemory&, f32, FOffscreenBuffer&, const FInputGamepad&);
+
+static void* renderWorker( void* _Nullable obj )
+{
+	pthread_setname_np("Render Thread");
+	CAMetalDisplayLink* metalDisplayLink = (__bridge CAMetalDisplayLink *)obj;
+	[metalDisplayLink addToRunLoop:[NSRunLoop currentRunLoop]
+						   forMode:NSDefaultRunLoopMode];
+	[[NSRunLoop currentRunLoop] run];
+	return nil;
+}
 
 struct FGameModule
 {
@@ -35,9 +46,15 @@ struct FGameModule
 auto GameModuleLoad() -> FGameModule
 {
 	NSString* exeDir = [[[NSBundle mainBundle] executableURL]URLByDeletingLastPathComponent].path;
-	NSString* src = [exeDir stringByAppendingPathComponent:[NSString stringWithFormat:@"libTestbed.dylib"]];
+	#if 1
+	NSString* src = [exeDir stringByAppendingPathComponent:[NSString stringWithFormat:@"lib%s.dylib", "Testbed"]];
 	static u32 LibraryLoadCounter = 0;
-	NSString* dst = [exeDir stringByAppendingPathComponent:[NSString stringWithFormat:@"libTestbed_hot_reload_%d.dylib", LibraryLoadCounter++]];
+	NSString* dst = [exeDir stringByAppendingPathComponent:[NSString stringWithFormat:@"lib%shot_reload_%d.dylib", "Testbed", LibraryLoadCounter++]];
+	#else
+	NSString* src = [exeDir stringByAppendingPathComponent:[NSString stringWithFormat:@"lib%s.dylib", "Oni"]];
+	static u32 LibraryLoadCounter = 0;
+	NSString* dst = [exeDir stringByAppendingPathComponent:[NSString stringWithFormat:@"lib%shot_reload_%d.dylib", "Oni", LibraryLoadCounter++]];
+	#endif
 	// Remove hotreload library first if it is exists
 	if ([[NSFileManager defaultManager] fileExistsAtPath:dst])
 		[[NSFileManager defaultManager] removeItemAtPath:dst error:nil];
@@ -139,11 +156,14 @@ auto GameModuleChanged(FGameModule& GameModule) -> bool
 	FInputGamepad						_gamepad;
 	FGameMemory							_gameMemory;
 	FGameModule							_gameModule;
+	bool								_bUseOffscreenBuffer;
 }
 
 // NOTE: Engine and Game initialization procedure
 - (void)applicationDidFinishLaunching:(NSNotification*)aNotification
 {
+	pthread_setname_np("Main Thread");
+
 	_gameModule = GameModuleLoad();
 
 	[self createWindow];
@@ -169,8 +189,6 @@ auto GameModuleChanged(FGameModule& GameModule) -> bool
 
 	// Creaet and Add display link to the run loop to have an entry point for the application
 	[self createMetalDisplayLink];
-	[_metalDisplayLink addToRunLoop:[NSRunLoop currentRunLoop] forMode:NSRunLoopCommonModes];
-
 	_lastTargetTimestamp = CACurrentMediaTime();
 }
 
@@ -184,33 +202,37 @@ auto GameModuleChanged(FGameModule& GameModule) -> bool
 	}
 
 	[self pollInput];
+	_offscreenBuffer.Drawable = (void*)update.drawable;
 	_gameModule.GameUpdateAndRender(_gameMemory, _lastDeltaTime, _offscreenBuffer, _gamepad);
 
-	@autoreleasepool
+	if (_bUseOffscreenBuffer)
 	{
-		id<MTLCommandBuffer> pCmd = [_pCommandQueue commandBuffer];
-
-		// Fill texture
+		@autoreleasepool
 		{
-			NSUInteger bytesPerRow = _offscreenBuffer.Width * _offscreenBuffer.BytesPerPixel;
-			MTLRegion region = MTLRegionMake2D(0, 0, _offscreenBuffer.Width, _offscreenBuffer.Height);
-			[_backBuffer replaceRegion:region mipmapLevel:0 withBytes:_offscreenBuffer.Backbuffer bytesPerRow:bytesPerRow];
+			id<MTLCommandBuffer> pCmd = [_pCommandQueue commandBuffer];
+
+			// Fill texture
+			{
+				NSUInteger bytesPerRow = _offscreenBuffer.Width * _offscreenBuffer.BytesPerPixel;
+				MTLRegion region = MTLRegionMake2D(0, 0, _offscreenBuffer.Width, _offscreenBuffer.Height);
+				[_backBuffer replaceRegion:region mipmapLevel:0 withBytes:_offscreenBuffer.Backbuffer bytesPerRow:bytesPerRow];
+			}
+			// Present backbuffer render pass
+			{
+				_drawableRenderPass.colorAttachments[0].texture = update.drawable.texture;
+
+				id<MTLRenderCommandEncoder> encoder = [pCmd renderCommandEncoderWithDescriptor:_drawableRenderPass];
+				[encoder setRenderPipelineState:_pipelineState];
+				[encoder setFragmentTexture:_backBuffer atIndex:0];
+				[encoder setFragmentSamplerState:_backBufferSampler atIndex:0];
+				[encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
+				[encoder endEncoding];
+
+			}
+
+			[pCmd presentDrawable:update.drawable];
+			[pCmd commit];
 		}
-		// Present backbuffer render pass
-		{
-			_drawableRenderPass.colorAttachments[0].texture = update.drawable.texture;
-
-			id<MTLRenderCommandEncoder> encoder = [pCmd renderCommandEncoderWithDescriptor:_drawableRenderPass];
-			[encoder setRenderPipelineState:_pipelineState];
-			[encoder setFragmentTexture:_backBuffer atIndex:0];
-			[encoder setFragmentSamplerState:_backBufferSampler atIndex:0];
-			[encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
-			[encoder endEncoding];
-
-		}
-
-		[pCmd presentDrawable:update.drawable];
-		[pCmd commit];
 	}
 
 	CFTimeInterval currentTimestamp = CACurrentMediaTime();
@@ -276,6 +298,7 @@ auto GameModuleChanged(FGameModule& GameModule) -> bool
 - (void)createWindow
 {
 	auto Properties = _gameModule.GameGetSurfaceDesc();
+	_bUseOffscreenBuffer = Properties->bUseOffscreenBuffer;
 
 	_targetFPS = Properties->TargetFPS;
 
@@ -482,6 +505,33 @@ auto GameModuleChanged(FGameModule& GameModule) -> bool
 	_metalDisplayLink.delegate = self;
 	//                                                               Min,   Max,       Preffered
 	_metalDisplayLink.preferredFrameRateRange = CAFrameRateRangeMake(60.0f, _targetFPS, _targetFPS);
+
+	// Create a high-priority thread sets up the CAMetalDisplayLink callback and renders the game
+	int res = 0;
+	pthread_attr_t attr;
+	res = pthread_attr_init( &attr );
+	NSAssert( res == 0, @"Unable to initialize thread attributes." );
+	
+	// Opt out of priority decay:
+	res = pthread_attr_setschedpolicy( &attr, SCHED_RR );
+	NSAssert( res == 0, @"Unable to set thread attribute scheduler policy." );
+	
+	// Increate priority of render thread:
+	struct sched_param param = { .sched_priority = 45 };
+	res = pthread_attr_setschedparam( &attr, &param );
+	NSAssert( res == 0, @"Unable to set thread attribute priority." );
+	
+	// Enable the system to automatically clean up upon thread exit:
+	res = pthread_attr_setdetachstate( &attr, PTHREAD_CREATE_DETACHED );
+	NSAssert( res == 0, @"Unable set set thread attribute to run detached." );
+	
+	// Create thread:
+	pthread_t tid;
+	res = pthread_create( &tid, &attr, renderWorker, (__bridge void *)_metalDisplayLink );
+	NSAssert( res == 0, @"Unable to create render thread" );
+	
+	// Clean up transient objects:
+	pthread_attr_destroy( &attr );
 }
 
 - (void)addInputObservers
