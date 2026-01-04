@@ -77,6 +77,16 @@
 			"group": "build",
 			"detail": "Generate solution",
 		},
+		{
+			"type": "shell",
+			"label": "Build Shader",
+			"command": "xcrun -sdk macosx metal -c -frecord-sources -gline-tables-only Content/Shaders/BuiltIn.MaterialShader.metal -o Content/Shaders/BuiltIn.MaterialShader.metal.air && xcrun -sdk macosx metal -frecord-sources -gline-tables-only -o Content/Shaders/BuiltIn.MaterialShader.metallib Content/Shaders/BuiltIn.MaterialShader.metal.air",
+			"options": {
+				"cwd": "${workspaceFolder}"
+			},
+			"group": "build",
+			"detail": "Generate solution",
+		},
 	],
 	"version": "2.0.0"
 }

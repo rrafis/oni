@@ -9,6 +9,9 @@
 #include <glm/ext/matrix_transform.hpp>
 #include <glm/glm.hpp>
 
+#define STB_IMAGE_IMPLEMENTATION
+#include <stb_image.h>
+
 #include "MeshUtils.h"
 #include <Foundation/Foundation.hpp>
 #include <Metal/Metal.hpp>
@@ -35,6 +38,13 @@ struct FGameState
 	MTL::Texture* DepthTexture;
 	MTL::DepthStencilState* DepthStencilState;
 
+	MTL::SamplerState* Sampler;
+	MTL::Buffer* MaterialBuffer;
+	MTL::Buffer* ArgumentBuffer;
+
+	std::vector<MTL::Texture*> Textures;
+	std::vector<Engine::Mesh::FRenderMaterial> Materials;
+
 	NS::SharedPtr<MTL::SharedEvent> PacingEvent;
 	u64 PacingTimeStampIndex;
 	u64 MaxFramesInFlight;
@@ -55,12 +65,114 @@ struct FGameState
 
 constexpr auto ContentPath = "Content";
 
-auto LoadMesh(MTL::Device* Device, const char* Path) -> Engine::Mesh::FMeshRenderer
+struct FTexture
 {
-	auto LoadPath = std::filesystem::current_path() / ContentPath / Path;
-	auto SwordMesh = Engine::Mesh::MDLIO::ExportMeshFromPath(Device, LoadPath.c_str());
+	u32 Width, Height;
+	u8 Channels;
+	std::vector<u8> Pixels;
+};
 
-	return Engine::Mesh::Metal::ProcessMeshData(Device, SwordMesh);
+auto LoadImage(const char* path) -> FTexture
+{
+	stbi_set_flip_vertically_on_load(true);
+
+	int width, height, channels;
+	unsigned char* data = stbi_load(path, &width, &height, &channels, 4);
+	channels = 4;
+
+	if (data == nullptr)
+	{
+		// TODO: Handle error case
+		auto v = *data;
+	}
+
+	auto size = width * height * channels;
+
+	FTexture Texture;
+	Texture.Width = width;
+	Texture.Height = height;
+	Texture.Channels = channels;
+	Texture.Pixels.reserve(size);
+	for (u32 index = 0; index < size; index += 4)
+	{
+		Texture.Pixels.emplace_back(data[index + 0]);
+		Texture.Pixels.emplace_back(data[index + 1]);
+		Texture.Pixels.emplace_back(data[index + 2]);
+		Texture.Pixels.emplace_back(data[index + 3]);
+	}
+
+	// std::cout << "Image loaded: " << width << "x" << height << " with " << channels << " channels." << std::endl;
+
+	// Free memory when done
+	stbi_image_free(data);
+
+	return Texture;
+}
+
+auto CreateTexture(FGameState& State, MTL::Device* Device, const char* RootPath, const char* Name) -> MTL::ResourceID
+{
+	auto LoadPath = std::filesystem::current_path() / ContentPath / RootPath / Name;
+	LoadPath.replace_extension(".png");
+	auto RawTexture = LoadImage(LoadPath.c_str());
+
+	MTL::TextureDescriptor* TextureDesc =
+		MTL::TextureDescriptor::texture2DDescriptor(MTL::PixelFormatRGBA8Unorm_sRGB, RawTexture.Width, RawTexture.Height, true);
+	MTL::Texture* Texture = State.Device->newTexture(TextureDesc);
+
+	// Upload texture data to VRAM
+	MTL::Region region = MTL::Region(0, 0, 0, RawTexture.Width, RawTexture.Height, 1);
+	NS::UInteger bytesPerRow = RawTexture.Channels * RawTexture.Width;
+	Texture->replaceRegion(region, 0, (void*)RawTexture.Pixels.data(), bytesPerRow);
+	Texture->setLabel(NS::String::alloc()->init(Name, NS::UTF8StringEncoding));
+
+	// Generate mipmaps
+	MTL::CommandQueue* queue = Device->newCommandQueue();
+	MTL::CommandBuffer* cmd = queue->commandBuffer();
+	MTL::BlitCommandEncoder* encoder = cmd->blitCommandEncoder();
+	encoder->generateMipmaps(Texture);
+	encoder->endEncoding();
+	cmd->commit();
+	cmd->waitUntilCompleted();
+
+	State.Textures.emplace_back(Texture);
+	return Texture->gpuResourceID();
+}
+
+auto LoadMesh(FGameState& State, MTL::Device* Device, const char* RootPath, const char* Name) -> Engine::Mesh::FMeshRenderer
+{
+	auto LoadPath = std::filesystem::path() / ContentPath / RootPath / Name;
+	auto Mesh = Engine::Mesh::MDLIO::ExportMeshFromPath(Device, LoadPath.c_str());
+
+	auto Result = Engine::Mesh::Metal::ProcessMeshData(Device, Mesh);
+
+	// HACK: Make stornger references for material index
+	auto MaterailIndexOffset = State.Materials.size();
+	for (auto& Submesh : Result.Submeshes)
+	{
+		Submesh.MaterialIndex += MaterailIndexOffset;
+	}
+
+	for (auto& Material : Mesh.Materials)
+	{
+		Engine::Mesh::FRenderMaterial RenderMat;
+		RenderMat.BaseColorFactor = Material.BaseColorFactor;
+		RenderMat.EmissiveFactor = Material.EmissiveFactor;
+		RenderMat.MetallicFactor = Material.MetallicFactor;
+		RenderMat.RoughnessFactor = Material.RoughnessFactor;
+		if (Material.BaseColorTex.size() > 0)
+			RenderMat.BaseColorTex = CreateTexture(State, Device, RootPath, Material.BaseColorTex.data());
+		if (Material.MetallicRoughnessTex.size() > 0)
+			RenderMat.MetallicRoughnessTex = CreateTexture(State, Device, RootPath, Material.MetallicRoughnessTex.data());
+		if (Material.NormalTex.size() > 0)
+			RenderMat.NormalTex = CreateTexture(State, Device, RootPath, Material.NormalTex.data());
+		if (Material.EmissiveTex.size() > 0)
+			RenderMat.EmissiveTex = CreateTexture(State, Device, RootPath, Material.EmissiveTex.data());
+		if (Material.OcclusionTex.size() > 0)
+			RenderMat.OcclusionTex = CreateTexture(State, Device, RootPath, Material.OcclusionTex.data());
+		State.Materials.emplace_back(RenderMat);
+	}
+
+	return Result;
 }
 
 static FGameSurfaceDesc Props;
@@ -94,9 +206,9 @@ RE_API auto GameInitialize(FGameMemory& Memory) -> void
 	{
 		State.DepthFormat = MTL::PixelFormatDepth32Float;
 
-		MTL::TextureDescriptor* descriptor = MTL::TextureDescriptor::texture2DDescriptor(State.DepthFormat, State.Width, State.Height, false);
-		descriptor->setUsage(MTL::TextureUsageRenderTarget);
-		State.DepthTexture = State.Device->newTexture(descriptor);
+		MTL::TextureDescriptor* DepthTextureDesc = MTL::TextureDescriptor::texture2DDescriptor(State.DepthFormat, State.Width, State.Height, false);
+		DepthTextureDesc->setUsage(MTL::TextureUsageRenderTarget);
+		State.DepthTexture = State.Device->newTexture(DepthTextureDesc);
 
 		auto* DepthAttachment = State.DrawableRenderPass->depthAttachment();
 		DepthAttachment->setTexture(State.DepthTexture);
@@ -118,45 +230,51 @@ RE_API auto GameInitialize(FGameMemory& Memory) -> void
 
 	State.Meshes.emplace_back();
 	State.Meshes[0].Position = glm::vec3(0.0f, -0.5f, 2.0f);
-	State.Meshes[0].Render = LoadMesh(State.Device, "meshes/samanosuke_future/Future Samanosuke.obj");
+	State.Meshes[0].Render = LoadMesh(State, State.Device, "meshes/samanosuke_future", "Future_Samanosuke.obj");
 	State.Meshes.emplace_back();
 	State.Meshes[1].Position = glm::vec3(0.0f, -0.5f, 2.0f);
-	State.Meshes[1].Render = LoadMesh(State.Device, "meshes/samanosuke_weapons/Tensou lvl 3.obj");
+	State.Meshes[1].Render = LoadMesh(State, State.Device, "meshes/samanosuke_weapons", "Tensou_lvl_3.obj");
 
 	State.Projection = glm::perspectiveFov(glm::radians(90.0f), (f32)Props.Width, (f32)Props.Height, 0.01f * s_UnitsInMeter, 100.0f * s_UnitsInMeter);
 	State.View = glm::lookAtLH(State.CameraPosition * s_UnitsInMeter, State.CameraPosition * s_UnitsInMeter + glm::vec3(0, 0, 1), glm::vec3(0, 1, 0));
 
+	State.MaterialBuffer =
+		State.Device->newBuffer(State.Materials.data(), State.Materials.size() * sizeof(Engine::Mesh::FRenderMaterial), MTL::ResourceStorageModeShared);
 	{
-		const char* triShaderSource = "#include <metal_stdlib>\n"
-									  "using namespace metal;\n"
-									  "struct VertexIn {\n"
-									  "    float3 position [[attribute(0)]];\n"
-									  "    float3 normal [[attribute(1)]];\n"
-									  "    float2 uv [[attribute(2)]];\n"
-									  "};\n"
-									  "struct VSOut {\n"
-									  "	   float4 position [[position]];\n"
-									  "	   float3 normal;\n"
-									  "	   float2 uv;\n"
-									  "};\n"
-									  "vertex VSOut vertex_main(const VertexIn in [[stage_in]], constant float4x4 &MVP [[buffer(10)]]) {\n"
-									  "	   VSOut out;\n"
-									  "	   out.position = MVP * float4(in.position, 1.0);\n"
-									  "	   out.normal = in.normal;\n"
-									  "	   out.uv = in.uv;\n"
-									  "	   return out;\n"
-									  "}\n"
-									  "fragment float4 fragment_main(VSOut in [[stage_in]]) {\n"
-									  "	   return float4(in.uv.x, 0.18, in.uv.y, 1.0);\n"
-									  "}";
-
-		NS::String* shaderSource = NS::String::alloc()->init(triShaderSource, NS::StringEncoding::UTF8StringEncoding);
-		MTL::CompileOptions* options = nullptr;
-		NS::Error* error = nullptr;
-		auto Shader = State.Device->newLibrary(shaderSource, options, &error);
+		NS::Error* error;
+		NS::String* ShaderPath = NS::String::alloc()->init("Content/Shaders/BuiltIn.MaterialShader.metallib", NS::StringEncoding::UTF8StringEncoding);
+		auto Shader = State.Device->newLibrary(ShaderPath, &error);
+		if (!Shader)
+		{
+			if (error)
+			{
+				NS::String* desc = error->localizedDescription();
+				printf("Shader compile error: %s\n", desc->utf8String());
+			}
+			else
+			{
+				printf("Shader compile failed with unknown error.\n");
+			}
+		}
 
 		auto vertFunc = Shader->newFunction(NS::String::alloc()->init("vertex_main", NS::StringEncoding::UTF8StringEncoding));
 		auto fragFunc = Shader->newFunction(NS::String::alloc()->init("fragment_main", NS::StringEncoding::UTF8StringEncoding));
+
+		MTL::SamplerDescriptor* sdesc = MTL::SamplerDescriptor::alloc()->init();
+		sdesc->setMinFilter(MTL::SamplerMinMagFilterNearest);
+		sdesc->setMagFilter(MTL::SamplerMinMagFilterNearest);
+		sdesc->setSAddressMode(MTL::SamplerAddressModeClampToEdge);
+		sdesc->setTAddressMode(MTL::SamplerAddressModeClampToEdge);
+		sdesc->setSupportArgumentBuffers(true);
+		State.Sampler = State.Device->newSamplerState(sdesc);
+		sdesc->release();
+
+		auto ArgEncoder = fragFunc->newArgumentEncoder(12);
+		State.ArgumentBuffer = State.Device->newBuffer(ArgEncoder->encodedLength(), MTL::ResourceStorageModeShared);
+		ArgEncoder->setArgumentBuffer(State.ArgumentBuffer, 0);
+		ArgEncoder->setSamplerState(State.Sampler, 0);
+		ArgEncoder->setBuffer(State.MaterialBuffer, 0, 1);
+		ArgEncoder->release();
 
 		MTL::RenderPipelineDescriptor* pipeDesc = MTL::RenderPipelineDescriptor::alloc()->init();
 		pipeDesc->setVertexFunction(vertFunc);
@@ -191,16 +309,16 @@ RE_API auto GameUpdateAndRender(FGameMemory& Memory, f32 DeltaTime, FOffscreenBu
 		State.Height = Drawable->texture()->height();
 
 		State.DepthTexture->release();
-		MTL::TextureDescriptor* descriptor = MTL::TextureDescriptor::texture2DDescriptor(State.DepthFormat, State.Width, State.Height, false);
-		descriptor->setUsage(MTL::TextureUsageRenderTarget);
-		State.DepthTexture = State.Device->newTexture(descriptor);
+		MTL::TextureDescriptor* DepthTextureDesc = MTL::TextureDescriptor::texture2DDescriptor(State.DepthFormat, State.Width, State.Height, false);
+		DepthTextureDesc->setUsage(MTL::TextureUsageRenderTarget);
+		State.DepthTexture = State.Device->newTexture(DepthTextureDesc);
 
 		auto* DepthAttachment = State.DrawableRenderPass->depthAttachment();
 		DepthAttachment->setTexture(State.DepthTexture);
 	}
 
-	static f32 Angle = 0.0f;
-	Angle += 1.0f * DeltaTime;
+	static f32 Angle = glm::radians(180.0f);
+	Angle += glm::radians(20.0f) * DeltaTime;
 
 	State.Projection = glm::perspectiveFov(
 		glm::radians(90.0f), (f32)Drawable->texture()->width(), (f32)Drawable->texture()->height(), 0.01f * s_UnitsInMeter, 1000.0f * s_UnitsInMeter);
@@ -219,9 +337,18 @@ RE_API auto GameUpdateAndRender(FGameMemory& Memory, f32 DeltaTime, FOffscreenBu
 		Encoder->setDepthStencilState(State.DepthStencilState);
 		// Encoder->setTriangleFillMode(MTL::TriangleFillModeLines);
 
+		for (auto& Tex : State.Textures)
+		{
+			Encoder->useResource(Tex, MTL::ResourceUsageSample);
+		}
+		Encoder->useResource(State.MaterialBuffer, MTL::ResourceUsageRead);
+
+		Encoder->setFragmentBuffer(State.MaterialBuffer, 0, 11);
+		Encoder->setFragmentBuffer(State.ArgumentBuffer, 0, 12);
+
 		for (auto& Mesh : State.Meshes)
 		{
-			auto Model = glm::translate(glm::mat4(1), Mesh.Position * s_UnitsInMeter) * glm::rotate(glm::mat4(1), -90.0f, glm::vec3(1.0f, 0.0f, 0.0f))
+			auto Model = glm::translate(glm::mat4(1), Mesh.Position * s_UnitsInMeter) * glm::rotate(glm::mat4(1), glm::radians(-90.0f), glm::vec3(1.0f, 0.0f, 0.0f))
 				* glm::rotate(glm::mat4(1), Angle, glm::vec3(0.0f, 0.0f, 1.0f));
 			State.MVP = State.Projection * State.View * Model;
 
@@ -230,6 +357,9 @@ RE_API auto GameUpdateAndRender(FGameMemory& Memory, f32 DeltaTime, FOffscreenBu
 				Mesh.Render.VertexBuffers.data(), (NS::UInteger*)Mesh.Render.VertexBufferOffsets.data(), NS::Range::Make(0, Mesh.Render.VertexBuffers.size()));
 			for (auto& Submesh : Mesh.Render.Submeshes)
 			{
+				Encoder->setFragmentBytes(&Submesh.MaterialIndex, sizeof(u32), 13);
+				Encoder->setCullMode(Submesh.bDoubleSided ? MTL::CullModeNone : MTL::CullModeBack);
+				Encoder->setFrontFacingWinding(Submesh.bWindingOrderClockWise ? MTL::WindingClockwise : MTL::WindingCounterClockwise);
 				Encoder->drawIndexedPrimitives(MTL::PrimitiveTypeTriangle, Submesh.IndexCount, Submesh.IndexType, Submesh.IndexBuffer, 0);
 			}
 		}

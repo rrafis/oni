@@ -129,6 +129,9 @@ namespace Engine::Mesh
 				Sub.IndexType = Engine::Mesh::Metal::MapIndexType(Submesh.IndexType);
 				Sub.IndexCount = Submesh.IndexCount;
 				Sub.IndexBuffer = Buffer;
+				Sub.MaterialIndex = Submesh.MaterialIndex;
+				Sub.bDoubleSided = true;//MeshData.Materials[Sub.MaterialIndex].DoubleSided;
+				Sub.bWindingOrderClockWise = true;
 				MeshRender.Submeshes.emplace_back(Sub);
 			}
 

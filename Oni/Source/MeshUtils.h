@@ -4,6 +4,8 @@
 
 #include <Metal/Metal.hpp>
 
+#include <glm/glm.hpp>
+
 namespace Engine::Mesh
 {
 	// Canonical semantics and data formats for portability
@@ -58,12 +60,31 @@ namespace Engine::Mesh
 			MTL::IndexType IndexType;
 			u32 IndexCount;
 			MTL::Buffer* IndexBuffer;
+
+			u32 MaterialIndex;
+
+			bool bDoubleSided;
+			bool bWindingOrderClockWise;
 		};
 
 		MTL::VertexDescriptor* VertexDescriptor;
 		std::vector<MTL::Buffer*> VertexBuffers;
 		std::vector<u32> VertexBufferOffsets;
 		std::vector<FSubmesh> Submeshes;
+	};
+
+	struct alignas(16) FRenderMaterial
+	{
+		// Scalar factors
+		glm::vec4 BaseColorFactor = { 1, 1, 1, 1 };
+		glm::vec4 EmissiveFactor = { 0, 0, 0, 0 };
+		f32 MetallicFactor = 1.0f;
+		f32 RoughnessFactor = 1.0f;
+		MTL::ResourceID BaseColorTex;
+		MTL::ResourceID MetallicRoughnessTex; // ORM or separate maps
+		MTL::ResourceID NormalTex;
+		MTL::ResourceID EmissiveTex;
+		MTL::ResourceID OcclusionTex;
 	};
 
 	namespace MDLIO
@@ -89,10 +110,10 @@ namespace Engine::Mesh
 		struct FPBRMaterial
 		{
 			// Scalar factors
-			float BaseColorFactor[4] = { 1, 1, 1, 1 };
-			float MetallicFactor = 1.0f;
-			float RoughnessFactor = 1.0f;
-			float EmissiveFactor[3] = { 0, 0, 0 };
+			glm::vec4 BaseColorFactor = { 1, 1, 1, 1 };
+			f32 MetallicFactor = 1.0f;
+			f32 RoughnessFactor = 1.0f;
+			glm::vec4 EmissiveFactor = { 0, 0, 0, 0 };
 			// Texture references (store paths or IDs; resolve externally)
 			std::string BaseColorTex;
 			std::string MetallicRoughnessTex; // ORM or separate maps
@@ -113,8 +134,8 @@ namespace Engine::Mesh
 			std::vector<u8> Indices; // raw index data
 
 			// Future-proof extras
-			float BoundingSphere[4]; // xyz center + radius
-									 // Or AABB: min[3], max[3]
+			f32 BoundingSphere[4]; // xyz center + radius
+								   // Or AABB: min[3], max[3]
 		};
 
 		struct FMeshData
