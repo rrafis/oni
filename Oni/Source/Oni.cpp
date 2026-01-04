@@ -17,7 +17,7 @@
 
 #include <filesystem>
 
-constexpr f32 s_UnitsInMeter = 120.f;
+constexpr f32 s_UnitsInMeter = 30.f;
 
 struct FMesh
 {
@@ -31,6 +31,9 @@ struct FGameState
 	MTL::CommandQueue* Queue;
 	MTL::RenderPassDescriptor* DrawableRenderPass;
 	MTL::RenderPipelineState* Pipeline;
+	MTL::PixelFormat DepthFormat;
+	MTL::Texture* DepthTexture;
+	MTL::DepthStencilState* DepthStencilState;
 
 	NS::SharedPtr<MTL::SharedEvent> PacingEvent;
 	u64 PacingTimeStampIndex;
@@ -45,6 +48,9 @@ struct FGameState
 	glm::mat4 Projection;
 
 	glm::mat4 MVP;
+
+	u32 Width;
+	u32 Height;
 };
 
 constexpr auto ContentPath = "Content";
@@ -77,9 +83,32 @@ RE_API auto GameInitialize(FGameMemory& Memory) -> void
 	// Construct game state in place
 	new (&State) FGameState();
 
+	State.Width = Props.Width;
+	State.Height = Props.Height;
+
 	State.Device = MTL::CreateSystemDefaultDevice();
 	State.Queue = State.Device->newCommandQueue();
 	State.DrawableRenderPass = MTL::RenderPassDescriptor::alloc()->init();
+
+	// Depth
+	{
+		State.DepthFormat = MTL::PixelFormatDepth32Float;
+
+		MTL::TextureDescriptor* descriptor = MTL::TextureDescriptor::texture2DDescriptor(State.DepthFormat, State.Width, State.Height, false);
+		descriptor->setUsage(MTL::TextureUsageRenderTarget);
+		State.DepthTexture = State.Device->newTexture(descriptor);
+
+		auto* DepthAttachment = State.DrawableRenderPass->depthAttachment();
+		DepthAttachment->setTexture(State.DepthTexture);
+		DepthAttachment->setLoadAction(MTL::LoadActionClear);
+		DepthAttachment->setStoreAction(MTL::StoreActionStore);
+		DepthAttachment->setClearDepth(1.0f);
+
+		MTL::DepthStencilDescriptor* depthDesc = MTL::DepthStencilDescriptor::alloc()->init();
+		depthDesc->setDepthCompareFunction(MTL::CompareFunctionLess);
+		depthDesc->setDepthWriteEnabled(true);
+		State.DepthStencilState = State.Device->newDepthStencilState(depthDesc);
+	}
 
 	State.PacingEvent = NS::TransferPtr(State.Device->newSharedEvent());
 	State.PacingTimeStampIndex = 0;
@@ -88,8 +117,11 @@ RE_API auto GameInitialize(FGameMemory& Memory) -> void
 	State.CameraPosition = glm::vec3(0.0f, 0.0f, 0.0f);
 
 	State.Meshes.emplace_back();
-	State.Meshes[0].Position = glm::vec3(0.0f, 0.0f, 1.0f);
-	State.Meshes[0].Render = LoadMesh(State.Device, "meshes/samanosuke_weapons/Tensou lvl 1.obj");
+	State.Meshes[0].Position = glm::vec3(0.0f, -0.5f, 2.0f);
+	State.Meshes[0].Render = LoadMesh(State.Device, "meshes/samanosuke_future/Future Samanosuke.obj");
+	State.Meshes.emplace_back();
+	State.Meshes[1].Position = glm::vec3(0.0f, -0.5f, 2.0f);
+	State.Meshes[1].Render = LoadMesh(State.Device, "meshes/samanosuke_weapons/Tensou lvl 3.obj");
 
 	State.Projection = glm::perspectiveFov(glm::radians(90.0f), (f32)Props.Width, (f32)Props.Height, 0.01f * s_UnitsInMeter, 100.0f * s_UnitsInMeter);
 	State.View = glm::lookAtLH(State.CameraPosition * s_UnitsInMeter, State.CameraPosition * s_UnitsInMeter + glm::vec3(0, 0, 1), glm::vec3(0, 1, 0));
@@ -107,7 +139,7 @@ RE_API auto GameInitialize(FGameMemory& Memory) -> void
 									  "	   float3 normal;\n"
 									  "	   float2 uv;\n"
 									  "};\n"
-									  "vertex VSOut vertex_main(const VertexIn in [[stage_in]], constant float4x4 &MVP [[buffer(2)]]) {\n"
+									  "vertex VSOut vertex_main(const VertexIn in [[stage_in]], constant float4x4 &MVP [[buffer(10)]]) {\n"
 									  "	   VSOut out;\n"
 									  "	   out.position = MVP * float4(in.position, 1.0);\n"
 									  "	   out.normal = in.normal;\n"
@@ -131,6 +163,7 @@ RE_API auto GameInitialize(FGameMemory& Memory) -> void
 		pipeDesc->setFragmentFunction(fragFunc);
 		pipeDesc->setVertexDescriptor(State.Meshes[0].Render.VertexDescriptor);
 		pipeDesc->colorAttachments()->object(0)->setPixelFormat(MTL::PixelFormatRGBA16Float);
+		pipeDesc->setDepthAttachmentPixelFormat(State.DepthFormat);
 		State.Pipeline = State.Device->newRenderPipelineState(pipeDesc, &error);
 	}
 }
@@ -152,6 +185,23 @@ RE_API auto GameUpdateAndRender(FGameMemory& Memory, f32 DeltaTime, FOffscreenBu
 
 	CA::MetalDrawable* Drawable = (CA::MetalDrawable*)Buffer.Drawable;
 
+	if (Drawable->texture()->width() != State.Width || Drawable->texture()->height() != State.Height)
+	{
+		State.Width = Drawable->texture()->width();
+		State.Height = Drawable->texture()->height();
+
+		State.DepthTexture->release();
+		MTL::TextureDescriptor* descriptor = MTL::TextureDescriptor::texture2DDescriptor(State.DepthFormat, State.Width, State.Height, false);
+		descriptor->setUsage(MTL::TextureUsageRenderTarget);
+		State.DepthTexture = State.Device->newTexture(descriptor);
+
+		auto* DepthAttachment = State.DrawableRenderPass->depthAttachment();
+		DepthAttachment->setTexture(State.DepthTexture);
+	}
+
+	static f32 Angle = 0.0f;
+	Angle += 1.0f * DeltaTime;
+
 	State.Projection = glm::perspectiveFov(
 		glm::radians(90.0f), (f32)Drawable->texture()->width(), (f32)Drawable->texture()->height(), 0.01f * s_UnitsInMeter, 1000.0f * s_UnitsInMeter);
 	State.View = glm::lookAtLH(State.CameraPosition * s_UnitsInMeter, State.CameraPosition * s_UnitsInMeter + glm::vec3(0, 0, 1), glm::vec3(0, 1, 0));
@@ -166,14 +216,16 @@ RE_API auto GameUpdateAndRender(FGameMemory& Memory, f32 DeltaTime, FOffscreenBu
 
 		MTL::RenderCommandEncoder* Encoder = Cmd->renderCommandEncoder(State.DrawableRenderPass);
 		Encoder->setRenderPipelineState(State.Pipeline);
+		Encoder->setDepthStencilState(State.DepthStencilState);
 		// Encoder->setTriangleFillMode(MTL::TriangleFillModeLines);
 
 		for (auto& Mesh : State.Meshes)
 		{
-			auto Model = glm::translate(glm::mat4(1), Mesh.Position * s_UnitsInMeter);
+			auto Model = glm::translate(glm::mat4(1), Mesh.Position * s_UnitsInMeter) * glm::rotate(glm::mat4(1), -90.0f, glm::vec3(1.0f, 0.0f, 0.0f))
+				* glm::rotate(glm::mat4(1), Angle, glm::vec3(0.0f, 0.0f, 1.0f));
 			State.MVP = State.Projection * State.View * Model;
 
-			Encoder->setVertexBytes(&State.MVP, sizeof(State.MVP), 2);
+			Encoder->setVertexBytes(&State.MVP, sizeof(State.MVP), 10);
 			Encoder->setVertexBuffers(
 				Mesh.Render.VertexBuffers.data(), (NS::UInteger*)Mesh.Render.VertexBufferOffsets.data(), NS::Range::Make(0, Mesh.Render.VertexBuffers.size()));
 			for (auto& Submesh : Mesh.Render.Submeshes)
