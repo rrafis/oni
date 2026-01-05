@@ -9,17 +9,33 @@ project "Oni"
 
 	defines {
 		"RE_EXPORT",
+		"JPH_CROSS_PLATFORM_DETERMINISTIC",
 	}
+
+	filter "configurations:Debug"
+		defines {
+			"JPH_ENABLE_ASSERTS",
+			"TRACK_BROADPHASE_STATS",
+			"TRACK_NARROWPHASE_STATS",
+			"JPH_TRACK_SIMULATION_STATS",
+			"JPH_TRACK_SIMULATION_STATS",
+		}
+	filter {}
 
 	externalincludedirs {
 		"%{wks.location}/ThirdParty/entt/src",
 		"%{wks.location}/ThirdParty/glm",
 		"%{wks.location}/ThirdParty/stb",
+		"%{wks.location}/ThirdParty/Jolt/JoltPhysics",
 		"%{wks.location}/Engine/Source",
 	}
 
 	files {
 		"Source/**.*",
+	}
+
+	links {
+		"Jolt",
 	}
 
 	filter "platforms:Mac"

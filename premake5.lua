@@ -55,6 +55,8 @@ workspace "RE"
 		}
 	filter {}
 
+include "ThirdParty/Jolt/Jolt.premake5.lua"
+
 include "Engine/premake5.lua"
 include "Testbed/premake5.lua"
 include "Oni/premake5.lua"

@@ -68,3 +68,6 @@ Assets/obj/
 
 # Misc
 Capture
+
+# Exception for the meshes OBJ format
+!Content/**/*.obj

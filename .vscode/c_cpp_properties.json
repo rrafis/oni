@@ -4,13 +4,20 @@
 			"${workspaceFolder}/Engine/Source",
 			"${workspaceFolder}/ThirdParty/entt/src",
 			"${workspaceFolder}/ThirdParty/glm",
-			"${workspaceFolder}/ThirdParty/stb"
+			"${workspaceFolder}/ThirdParty/stb",
+			"${workspaceFolder}/ThirdParty/Jolt/JoltPhysics"
 		],
 		"baseDebugDefines": [
 			"GLM_FORCE_INTRINSICS",
 			"RE_DEBUG",
 			"RE_ENABLE_ASSERT",
-			"RE_INTERNAL"
+			"RE_INTERNAL",
+			"JPH_DEBUG",
+			"JPH_ENABLE_ASSERTS",
+			"TRACK_BROADPHASE_STATS",
+			"TRACK_NARROWPHASE_STATS",
+			"JPH_TRACK_SIMULATION_STATS",
+			"JPH_TRACK_SIMULATION_STATS"
 		],
 		"baseShippingDefines": [
 			"GLM_FORCE_INTRINSICS",
