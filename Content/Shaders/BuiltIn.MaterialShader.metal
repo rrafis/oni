@@ -46,6 +46,7 @@ vertex VSOut vertex_main(const VertexIn in [[stage_in]], constant float4x4& MVP 
 fragment float4 fragment_main(VSOut in [[stage_in]], constant ArgumentBufferMaterial* materials [[buffer(11)]], constant MaterialArgs& args [[buffer(12)]], constant uint& MatIndex [[buffer(13)]])
 {
 	float4 baseColor = args.materials[MatIndex].baseColor.sample(args.samp, in.uv);
+	baseColor *= args.materials[MatIndex].baseColorFactor;
 	return baseColor;
 	// return float4(in.uv.x, 0.18, in.uv.y, 1.0);
 }

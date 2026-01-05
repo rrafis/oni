@@ -65,3 +65,6 @@ Makefile
 # Assets
 *.spv
 Assets/obj/
+
+# Misc
+Capture

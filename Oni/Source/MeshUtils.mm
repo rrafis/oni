@@ -287,12 +287,16 @@ namespace Engine::Mesh
 			@autoreleasepool
 			{
 				auto allocator = [[MTKMeshBufferAllocator alloc] initWithDevice:(id<MTLDevice>)Device];
-				MDLMesh* mdlSphere = [[MDLMesh alloc] initSphereWithExtent:{Radius*2.0f, Radius*2.0f, Radius*2.0f} segments:{Segmentes,Segmentes} inwardNormals:NO geometryType:MDLGeometryTypeTriangles allocator:allocator];
+				MDLMesh* mdlMesh = [[MDLMesh alloc] initSphereWithExtent:{Radius*2.0f, Radius*2.0f, Radius*2.0f}
+														        segments:{Segmentes,Segmentes}
+														   inwardNormals:NO
+														    geometryType:MDLGeometryTypeTriangles
+														       allocator:allocator];
 
 				// Generate tangents for PBR normal mapping
-				[mdlSphere addNormalsWithAttributeNamed:MDLVertexAttributeNormal
+				[mdlMesh addNormalsWithAttributeNamed:MDLVertexAttributeNormal
 										creaseThreshold:0.0];
-				[mdlSphere addTangentBasisForTextureCoordinateAttributeNamed:MDLVertexAttributeTextureCoordinate
+				[mdlMesh addTangentBasisForTextureCoordinateAttributeNamed:MDLVertexAttributeTextureCoordinate
 														normalAttributeNamed:MDLVertexAttributeNormal
 														tangentAttributeNamed:MDLVertexAttributeTangent];
 
@@ -304,12 +308,87 @@ namespace Engine::Mesh
 																					semantic:MDLMaterialSemanticBaseColor float4:{1,1,1,1}];
 				[mat setProperty:baseColor];
 
-				for (MDLSubmesh* sm in mdlSphere.submeshes)
+				for (MDLSubmesh* sm in mdlMesh.submeshes)
 				{
 					sm.material = mat;
 				}
 
-				auto Mesh = ExportMesh((id<MTLDevice>)Device, mdlSphere);
+				auto Mesh = ExportMesh((id<MTLDevice>)Device, mdlMesh);
+
+				return Mesh;
+			}
+		}
+
+		auto ExportBox(MTL::Device* Device, glm::vec3 Extent, glm::uvec3 Segmentes) -> FMeshData
+		{
+			@autoreleasepool
+			{
+				auto allocator = [[MTKMeshBufferAllocator alloc] initWithDevice:(id<MTLDevice>)Device];
+				MDLMesh* mdlMesh = [[MDLMesh alloc] initBoxWithExtent:{Extent.x, Extent.y, Extent.z} 
+														     segments:{Segmentes.x, Segmentes.y, Segmentes.z}
+														inwardNormals:NO
+														 geometryType:MDLGeometryTypeTriangles
+														    allocator:allocator];
+
+				// Generate tangents for PBR normal mapping
+				[mdlMesh addNormalsWithAttributeNamed:MDLVertexAttributeNormal
+										creaseThreshold:0.0];
+				[mdlMesh addTangentBasisForTextureCoordinateAttributeNamed:MDLVertexAttributeTextureCoordinate
+														normalAttributeNamed:MDLVertexAttributeNormal
+														tangentAttributeNamed:MDLVertexAttributeTangent];
+
+				NSError* err = nil;
+				// Assign a simple material
+				MDLMaterial* mat = [[MDLMaterial alloc] initWithName:@"SphereMat"
+													scatteringFunction:[[MDLScatteringFunction alloc] init]];
+				MDLMaterialProperty* baseColor = [[MDLMaterialProperty alloc] initWithName:@"baseColor"
+																					semantic:MDLMaterialSemanticBaseColor float4:{1,1,1,1}];
+				[mat setProperty:baseColor];
+
+				for (MDLSubmesh* sm in mdlMesh.submeshes)
+				{
+					sm.material = mat;
+				}
+
+				auto Mesh = ExportMesh((id<MTLDevice>)Device, mdlMesh);
+
+				return Mesh;
+			}
+		}
+
+		auto ExportCapsule(MTL::Device* Device, glm::vec3 Extent, glm::uvec3 Segmentes) -> FMeshData
+		{
+			@autoreleasepool
+			{
+				auto allocator = [[MTKMeshBufferAllocator alloc] initWithDevice:(id<MTLDevice>)Device];
+				MDLMesh* mdlMesh = [[MDLMesh alloc] initCapsuleWithExtent:{Extent.x, Extent.y, Extent.z} 
+														 cylinderSegments:{Segmentes.x, Segmentes.y}
+													   hemisphereSegments:Segmentes.z
+															inwardNormals:NO
+															 geometryType:MDLGeometryTypeTriangles
+															    allocator:allocator];
+
+				// Generate tangents for PBR normal mapping
+				[mdlMesh addNormalsWithAttributeNamed:MDLVertexAttributeNormal
+										creaseThreshold:0.0];
+				[mdlMesh addTangentBasisForTextureCoordinateAttributeNamed:MDLVertexAttributeTextureCoordinate
+														normalAttributeNamed:MDLVertexAttributeNormal
+														tangentAttributeNamed:MDLVertexAttributeTangent];
+
+				NSError* err = nil;
+				// Assign a simple material
+				MDLMaterial* mat = [[MDLMaterial alloc] initWithName:@"SphereMat"
+													scatteringFunction:[[MDLScatteringFunction alloc] init]];
+				MDLMaterialProperty* baseColor = [[MDLMaterialProperty alloc] initWithName:@"baseColor"
+																					semantic:MDLMaterialSemanticBaseColor float4:{1,1,1,1}];
+				[mat setProperty:baseColor];
+
+				for (MDLSubmesh* sm in mdlMesh.submeshes)
+				{
+					sm.material = mat;
+				}
+
+				auto Mesh = ExportMesh((id<MTLDevice>)Device, mdlMesh);
 
 				return Mesh;
 			}

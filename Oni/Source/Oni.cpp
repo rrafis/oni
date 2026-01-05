@@ -26,6 +26,10 @@ struct FMesh
 {
 	Engine::Mesh::FMeshRenderer Render;
 	glm::vec3 Position;
+	glm::vec3 Rotation;
+	glm::vec3 Velocity;
+	f32 PlayerAccelerationRate;
+	f32 PlayerFrictionCoeficient;
 };
 
 struct FGameState
@@ -37,6 +41,8 @@ struct FGameState
 	MTL::PixelFormat DepthFormat;
 	MTL::Texture* DepthTexture;
 	MTL::DepthStencilState* DepthStencilState;
+
+	MTL::ResourceID DummyTexture;
 
 	MTL::SamplerState* Sampler;
 	MTL::Buffer* MaterialBuffer;
@@ -50,6 +56,8 @@ struct FGameState
 	u64 MaxFramesInFlight;
 	u64 Frame;
 
+	FMesh* Player;
+	FMesh* Capsule;
 	std::vector<FMesh> Meshes;
 
 	glm::vec3 CameraPosition;
@@ -58,7 +66,7 @@ struct FGameState
 	glm::mat4 Projection;
 
 	glm::mat4 MVP;
-
+	f32 FOV;
 	u32 Width;
 	u32 Height;
 };
@@ -109,14 +117,10 @@ auto LoadImage(const char* path) -> FTexture
 	return Texture;
 }
 
-auto CreateTexture(FGameState& State, MTL::Device* Device, const char* RootPath, const char* Name) -> MTL::ResourceID
+auto CreateTexture(FGameState& State, MTL::Device* Device, FTexture RawTexture, const char* Name, bool bGenerateMips = true) -> MTL::ResourceID
 {
-	auto LoadPath = std::filesystem::current_path() / ContentPath / RootPath / Name;
-	LoadPath.replace_extension(".png");
-	auto RawTexture = LoadImage(LoadPath.c_str());
-
 	MTL::TextureDescriptor* TextureDesc =
-		MTL::TextureDescriptor::texture2DDescriptor(MTL::PixelFormatRGBA8Unorm_sRGB, RawTexture.Width, RawTexture.Height, true);
+		MTL::TextureDescriptor::texture2DDescriptor(MTL::PixelFormatRGBA8Unorm_sRGB, RawTexture.Width, RawTexture.Height, bGenerateMips);
 	MTL::Texture* Texture = State.Device->newTexture(TextureDesc);
 
 	// Upload texture data to VRAM
@@ -126,16 +130,42 @@ auto CreateTexture(FGameState& State, MTL::Device* Device, const char* RootPath,
 	Texture->setLabel(NS::String::alloc()->init(Name, NS::UTF8StringEncoding));
 
 	// Generate mipmaps
-	MTL::CommandQueue* queue = Device->newCommandQueue();
-	MTL::CommandBuffer* cmd = queue->commandBuffer();
-	MTL::BlitCommandEncoder* encoder = cmd->blitCommandEncoder();
-	encoder->generateMipmaps(Texture);
-	encoder->endEncoding();
-	cmd->commit();
-	cmd->waitUntilCompleted();
+	if (bGenerateMips)
+	{
+		MTL::CommandQueue* queue = Device->newCommandQueue();
+		MTL::CommandBuffer* cmd = queue->commandBuffer();
+		MTL::BlitCommandEncoder* encoder = cmd->blitCommandEncoder();
+		encoder->generateMipmaps(Texture);
+		encoder->endEncoding();
+		cmd->commit();
+		cmd->waitUntilCompleted();
+	}
 
 	State.Textures.emplace_back(Texture);
 	return Texture->gpuResourceID();
+}
+
+auto LoadTexture(FGameState& State, const char* RootPath, const char* Name) -> MTL::ResourceID
+{
+	auto LoadPath = std::filesystem::current_path() / ContentPath / RootPath / Name;
+	LoadPath.replace_extension(".png");
+	auto RawTexture = LoadImage(LoadPath.c_str());
+	return CreateTexture(State, State.Device, RawTexture, Name);
+}
+
+auto CreateDummyTexture(FGameState& State, const char* Name = "Dummy") -> MTL::ResourceID
+{
+	FTexture RawTexture;
+	RawTexture.Width = 1;
+	RawTexture.Height = 1;
+	RawTexture.Channels = 4;
+	// Set one pixel to 1,1,1,1
+	RawTexture.Pixels.emplace_back(255);
+	RawTexture.Pixels.emplace_back(255);
+	RawTexture.Pixels.emplace_back(255);
+	RawTexture.Pixels.emplace_back(255);
+
+	return CreateTexture(State, State.Device, RawTexture, Name, false);
 }
 
 auto LoadMesh(FGameState& State, MTL::Device* Device, const char* RootPath, const char* Name) -> Engine::Mesh::FMeshRenderer
@@ -159,16 +189,85 @@ auto LoadMesh(FGameState& State, MTL::Device* Device, const char* RootPath, cons
 		RenderMat.EmissiveFactor = Material.EmissiveFactor;
 		RenderMat.MetallicFactor = Material.MetallicFactor;
 		RenderMat.RoughnessFactor = Material.RoughnessFactor;
+
 		if (Material.BaseColorTex.size() > 0)
-			RenderMat.BaseColorTex = CreateTexture(State, Device, RootPath, Material.BaseColorTex.data());
+			RenderMat.BaseColorTex = LoadTexture(State, RootPath, Material.BaseColorTex.data());
+		else
+			RenderMat.BaseColorTex = State.DummyTexture;
+
 		if (Material.MetallicRoughnessTex.size() > 0)
-			RenderMat.MetallicRoughnessTex = CreateTexture(State, Device, RootPath, Material.MetallicRoughnessTex.data());
+			RenderMat.MetallicRoughnessTex = LoadTexture(State, RootPath, Material.MetallicRoughnessTex.data());
+
 		if (Material.NormalTex.size() > 0)
-			RenderMat.NormalTex = CreateTexture(State, Device, RootPath, Material.NormalTex.data());
+			RenderMat.NormalTex = LoadTexture(State, RootPath, Material.NormalTex.data());
+
 		if (Material.EmissiveTex.size() > 0)
-			RenderMat.EmissiveTex = CreateTexture(State, Device, RootPath, Material.EmissiveTex.data());
+			RenderMat.EmissiveTex = LoadTexture(State, RootPath, Material.EmissiveTex.data());
+
 		if (Material.OcclusionTex.size() > 0)
-			RenderMat.OcclusionTex = CreateTexture(State, Device, RootPath, Material.OcclusionTex.data());
+			RenderMat.OcclusionTex = LoadTexture(State, RootPath, Material.OcclusionTex.data());
+
+		State.Materials.emplace_back(RenderMat);
+	}
+
+	return Result;
+}
+
+auto LoadBox(FGameState& State, MTL::Device* Device, glm::vec3 Extent, glm::uvec3 Segments) -> Engine::Mesh::FMeshRenderer
+{
+	auto Mesh = Engine::Mesh::MDLIO::ExportBox(Device, Extent, Segments);
+	auto Result = Engine::Mesh::Metal::ProcessMeshData(Device, Mesh);
+
+	// HACK: Make stornger references for material index
+	auto MaterailIndexOffset = State.Materials.size();
+	for (auto& Submesh : Result.Submeshes)
+	{
+		Submesh.MaterialIndex += MaterailIndexOffset;
+	}
+
+	for (auto& Material : Mesh.Materials)
+	{
+		Engine::Mesh::FRenderMaterial RenderMat;
+		RenderMat.BaseColorFactor = Material.BaseColorFactor;
+		RenderMat.EmissiveFactor = Material.EmissiveFactor;
+		RenderMat.MetallicFactor = Material.MetallicFactor;
+		RenderMat.RoughnessFactor = Material.RoughnessFactor;
+		RenderMat.BaseColorTex = State.DummyTexture;
+		RenderMat.MetallicRoughnessTex = State.DummyTexture;
+		RenderMat.NormalTex = State.DummyTexture;
+		RenderMat.EmissiveTex = State.DummyTexture;
+		RenderMat.OcclusionTex = State.DummyTexture;
+		State.Materials.emplace_back(RenderMat);
+	}
+
+	return Result;
+}
+
+auto LoadCapsule(FGameState& State, MTL::Device* Device, glm::vec3 Extent, glm::uvec3 Segments) -> Engine::Mesh::FMeshRenderer
+{
+	auto Mesh = Engine::Mesh::MDLIO::ExportCapsule(Device, Extent, Segments);
+	auto Result = Engine::Mesh::Metal::ProcessMeshData(Device, Mesh);
+
+	// HACK: Make stornger references for material index
+	auto MaterailIndexOffset = State.Materials.size();
+	for (auto& Submesh : Result.Submeshes)
+	{
+		Submesh.MaterialIndex += MaterailIndexOffset;
+		Submesh.bWireframe = true;
+	}
+
+	for (auto& Material : Mesh.Materials)
+	{
+		Engine::Mesh::FRenderMaterial RenderMat;
+		RenderMat.BaseColorFactor = Material.BaseColorFactor;
+		RenderMat.EmissiveFactor = Material.EmissiveFactor;
+		RenderMat.MetallicFactor = Material.MetallicFactor;
+		RenderMat.RoughnessFactor = Material.RoughnessFactor;
+		RenderMat.BaseColorTex = State.DummyTexture;
+		RenderMat.MetallicRoughnessTex = State.DummyTexture;
+		RenderMat.NormalTex = State.DummyTexture;
+		RenderMat.EmissiveTex = State.DummyTexture;
+		RenderMat.OcclusionTex = State.DummyTexture;
 		State.Materials.emplace_back(RenderMat);
 	}
 
@@ -202,6 +301,8 @@ RE_API auto GameInitialize(FGameMemory& Memory) -> void
 	State.Queue = State.Device->newCommandQueue();
 	State.DrawableRenderPass = MTL::RenderPassDescriptor::alloc()->init();
 
+	State.DummyTexture = CreateDummyTexture(State);
+
 	// Depth
 	{
 		State.DepthFormat = MTL::PixelFormatDepth32Float;
@@ -229,13 +330,27 @@ RE_API auto GameInitialize(FGameMemory& Memory) -> void
 	State.CameraPosition = glm::vec3(0.0f, 0.0f, 0.0f);
 
 	State.Meshes.emplace_back();
-	State.Meshes[0].Position = glm::vec3(0.0f, -0.5f, 2.0f);
+	State.Meshes[0].Position = glm::vec3(0.0f, 0.0f, 0.0f);
+	State.Meshes[0].Rotation.x = -90.f;
 	State.Meshes[0].Render = LoadMesh(State, State.Device, "meshes/samanosuke_future", "Future_Samanosuke.obj");
 	State.Meshes.emplace_back();
-	State.Meshes[1].Position = glm::vec3(0.0f, -0.5f, 2.0f);
+	State.Meshes[1].Position = glm::vec3(0.0f, 0.0f, 0.0f);
+	State.Meshes[1].Rotation.x = -90.f;
 	State.Meshes[1].Render = LoadMesh(State, State.Device, "meshes/samanosuke_weapons", "Tensou_lvl_3.obj");
+	State.Meshes.emplace_back();
+	State.Meshes[2].Position = glm::vec3(0.0f, -0.05f, 0.0f);
+	State.Meshes[2].Render = LoadBox(State, State.Device, glm::vec3(100.0f, 0.1f, 100.0f) * s_UnitsInMeter, glm::uvec3(10, 1, 10));
+	State.Meshes.emplace_back();
+	State.Meshes[3].Position = glm::vec3(0.0f, 0.875f, 0.0f);
+	State.Meshes[3].Render = LoadCapsule(State, State.Device, glm::vec3(0.25f, 1.75f, 0.25f) * s_UnitsInMeter, glm::uvec3(12, 4, 6));
 
-	State.Projection = glm::perspectiveFov(glm::radians(90.0f), (f32)Props.Width, (f32)Props.Height, 0.01f * s_UnitsInMeter, 100.0f * s_UnitsInMeter);
+	State.Player = &State.Meshes[0];
+	State.Capsule = &State.Meshes[3];
+	State.Player->PlayerAccelerationRate = 20.0f;
+	State.Player->PlayerFrictionCoeficient = 5.0f;
+
+	State.FOV = 60.f;
+	State.Projection = glm::perspectiveFov(glm::radians(State.FOV), (f32)Props.Width, (f32)Props.Height, 0.01f * s_UnitsInMeter, 1000.0f * s_UnitsInMeter);
 	State.View = glm::lookAtLH(State.CameraPosition * s_UnitsInMeter, State.CameraPosition * s_UnitsInMeter + glm::vec3(0, 0, 1), glm::vec3(0, 1, 0));
 
 	State.MaterialBuffer =
@@ -315,14 +430,52 @@ RE_API auto GameUpdateAndRender(FGameMemory& Memory, f32 DeltaTime, FOffscreenBu
 
 		auto* DepthAttachment = State.DrawableRenderPass->depthAttachment();
 		DepthAttachment->setTexture(State.DepthTexture);
+
+		State.Projection = glm::perspectiveFov(glm::radians(State.FOV), (f32)State.Width, (f32)State.Height, 0.01f * s_UnitsInMeter, 1000.0f * s_UnitsInMeter);
 	}
 
-	static f32 Angle = glm::radians(180.0f);
-	Angle += glm::radians(20.0f) * DeltaTime;
+	// Move player
+	{
+		auto LeftStickAcceleration = glm::vec2(Gamepad.GamepadThumbstickLeft.X, Gamepad.GamepadThumbstickLeft.Y);
+		if (Gamepad.GamepadDpadUp.bPressed)
+		{
+			LeftStickAcceleration.y = 1.0f;
+		}
+		if (Gamepad.GamepadDpadDown.bPressed)
+		{
+			LeftStickAcceleration.y = -1.0f;
+		}
+		if (Gamepad.GamepadDpadRight.bPressed)
+		{
+			LeftStickAcceleration.x = 1.0f;
+		}
+		if (Gamepad.GamepadDpadLeft.bPressed)
+		{
+			LeftStickAcceleration.x = -1.0f;
+		}
+		if (LeftStickAcceleration.x != 0 || LeftStickAcceleration.y != 0.0)
+		{
+			LeftStickAcceleration = glm::normalize(LeftStickAcceleration);
+		}
+		LeftStickAcceleration *= State.Player->PlayerAccelerationRate;
 
-	State.Projection = glm::perspectiveFov(
-		glm::radians(90.0f), (f32)Drawable->texture()->width(), (f32)Drawable->texture()->height(), 0.01f * s_UnitsInMeter, 1000.0f * s_UnitsInMeter);
-	State.View = glm::lookAtLH(State.CameraPosition * s_UnitsInMeter, State.CameraPosition * s_UnitsInMeter + glm::vec3(0, 0, 1), glm::vec3(0, 1, 0));
+		glm::vec3 frictionAcceleration = State.Player->PlayerFrictionCoeficient * (-State.Player->Velocity);
+		glm::vec3 Acceleration = glm::vec3(LeftStickAcceleration.x, 0.0f, LeftStickAcceleration.y) + frictionAcceleration;
+
+		glm::vec3 MoveDelta = 0.5f * Acceleration * DeltaTime * DeltaTime + State.Player->Velocity * DeltaTime;
+		State.Player->Velocity = Acceleration * DeltaTime + State.Player->Velocity;
+
+		State.Player->Position += MoveDelta;
+	}
+
+	// Make camera to follow player
+	{
+		State.CameraPosition = State.Player->Position + glm::vec3(-0.25f, 1.5f, -2.5f);
+		auto LookAtPosition = (State.Player->Position + glm::vec3(-0.25f, 1.25f, 0.0));
+		State.View = glm::lookAtLH(State.CameraPosition * s_UnitsInMeter, LookAtPosition * s_UnitsInMeter, glm::vec3(0, 1, 0));
+	}
+
+	State.Capsule->Position = State.Player->Position + glm::vec3(0.0f, 0.875f, 0.0f);
 
 	MTL::CommandBuffer* Cmd = State.Queue->commandBuffer();
 
@@ -335,7 +488,6 @@ RE_API auto GameUpdateAndRender(FGameMemory& Memory, f32 DeltaTime, FOffscreenBu
 		MTL::RenderCommandEncoder* Encoder = Cmd->renderCommandEncoder(State.DrawableRenderPass);
 		Encoder->setRenderPipelineState(State.Pipeline);
 		Encoder->setDepthStencilState(State.DepthStencilState);
-		// Encoder->setTriangleFillMode(MTL::TriangleFillModeLines);
 
 		for (auto& Tex : State.Textures)
 		{
@@ -348,8 +500,8 @@ RE_API auto GameUpdateAndRender(FGameMemory& Memory, f32 DeltaTime, FOffscreenBu
 
 		for (auto& Mesh : State.Meshes)
 		{
-			auto Model = glm::translate(glm::mat4(1), Mesh.Position * s_UnitsInMeter) * glm::rotate(glm::mat4(1), glm::radians(-90.0f), glm::vec3(1.0f, 0.0f, 0.0f))
-				* glm::rotate(glm::mat4(1), Angle, glm::vec3(0.0f, 0.0f, 1.0f));
+			auto Model = glm::translate(glm::mat4(1), Mesh.Position * s_UnitsInMeter)
+				* glm::rotate(glm::mat4(1), glm::radians(Mesh.Rotation.x), glm::vec3(1.0f, 0.0f, 0.0f));
 			State.MVP = State.Projection * State.View * Model;
 
 			Encoder->setVertexBytes(&State.MVP, sizeof(State.MVP), 10);
@@ -357,6 +509,7 @@ RE_API auto GameUpdateAndRender(FGameMemory& Memory, f32 DeltaTime, FOffscreenBu
 				Mesh.Render.VertexBuffers.data(), (NS::UInteger*)Mesh.Render.VertexBufferOffsets.data(), NS::Range::Make(0, Mesh.Render.VertexBuffers.size()));
 			for (auto& Submesh : Mesh.Render.Submeshes)
 			{
+				Encoder->setTriangleFillMode(Submesh.bWireframe ? MTL::TriangleFillModeLines : MTL::TriangleFillModeFill);
 				Encoder->setFragmentBytes(&Submesh.MaterialIndex, sizeof(u32), 13);
 				Encoder->setCullMode(Submesh.bDoubleSided ? MTL::CullModeNone : MTL::CullModeBack);
 				Encoder->setFrontFacingWinding(Submesh.bWindingOrderClockWise ? MTL::WindingClockwise : MTL::WindingCounterClockwise);

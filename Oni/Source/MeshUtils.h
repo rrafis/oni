@@ -65,6 +65,7 @@ namespace Engine::Mesh
 
 			bool bDoubleSided;
 			bool bWindingOrderClockWise;
+			bool bWireframe = false;
 		};
 
 		MTL::VertexDescriptor* VertexDescriptor;
@@ -149,6 +150,8 @@ namespace Engine::Mesh
 		};
 
 		auto ExportSphere(MTL::Device* Device, f32 Radius, u32 Segmentes) -> FMeshData;
+		auto ExportBox(MTL::Device* Device, glm::vec3 Extent, glm::uvec3 Segmentes) -> FMeshData;
+		auto ExportCapsule(MTL::Device* Device, glm::vec3 Extent, glm::uvec3 Segmentes) -> FMeshData;
 		auto ExportMeshFromPath(MTL::Device* Device, const char* Path) -> FMeshData;
 	} // namespace MDLIO
 
