@@ -138,11 +138,14 @@ auto GameModuleChanged(FGameModule& GameModule) -> bool
 	CAMetalDisplayLink*					_metalDisplayLink;
 
 	id<MTLDevice>						_pDevice;
-	id<MTLCommandQueue>					_pCommandQueue;
+	id<MTL4CommandQueue>				_pCommandQueue;
 	id<MTLRenderPipelineState>			_pipelineState;
 	id<MTLTexture>						_backBuffer;
 	id<MTLSamplerState>					_backBufferSampler;
-	MTLRenderPassDescriptor* 			_drawableRenderPass;
+	MTL4RenderPassDescriptor* 			_drawableRenderPass;
+	id<MTLResidencySet>                 _backBufferResidencySet;
+	id<MTL4ArgumentTable>               _backBufferArgTable;
+	id<MTL4CommandAllocator>            _backBufferCommandAllocator;
 
 	CFTimeInterval						_lastTargetTimestamp;
 	f32									_lastDeltaTime;
@@ -209,7 +212,8 @@ auto GameModuleChanged(FGameModule& GameModule) -> bool
 	{
 		@autoreleasepool
 		{
-			id<MTLCommandBuffer> pCmd = [_pCommandQueue commandBuffer];
+			id<MTL4CommandBuffer> pCmd = [_pDevice newCommandBuffer];
+			[pCmd beginCommandBufferWithAllocator:_backBufferCommandAllocator];
 
 			// Fill texture
 			{
@@ -221,17 +225,19 @@ auto GameModuleChanged(FGameModule& GameModule) -> bool
 			{
 				_drawableRenderPass.colorAttachments[0].texture = update.drawable.texture;
 
-				id<MTLRenderCommandEncoder> encoder = [pCmd renderCommandEncoderWithDescriptor:_drawableRenderPass];
+				id<MTL4RenderCommandEncoder> encoder = [pCmd renderCommandEncoderWithDescriptor:_drawableRenderPass];
 				[encoder setRenderPipelineState:_pipelineState];
-				[encoder setFragmentTexture:_backBuffer atIndex:0];
-				[encoder setFragmentSamplerState:_backBufferSampler atIndex:0];
+				[encoder setArgumentTable:_backBufferArgTable atStages:MTLRenderStageFragment];
 				[encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
 				[encoder endEncoding];
 
 			}
-
-			[pCmd presentDrawable:update.drawable];
-			[pCmd commit];
+			
+			[pCmd endCommandBuffer];
+			[_pCommandQueue waitForDrawable:update.drawable];
+			[_pCommandQueue commit:&pCmd count:1];
+			[_pCommandQueue signalDrawable:update.drawable];
+			[update.drawable present];
 		}
 	}
 
@@ -424,9 +430,29 @@ auto GameModuleChanged(FGameModule& GameModule) -> bool
 
 - (void)createMetalResources
 {
-	_drawableRenderPass = [[MTLRenderPassDescriptor alloc] init];
+	_drawableRenderPass = [[MTL4RenderPassDescriptor alloc] init];
 
-	_pCommandQueue = [_pDevice newCommandQueue];
+	_pCommandQueue = [_pDevice newMTL4CommandQueue];
+	_backBufferCommandAllocator = [_pDevice newCommandAllocator];
+	
+	NSError* error = nil;
+
+	MTLResidencySetDescriptor* residencySetDesc = [[MTLResidencySetDescriptor alloc] init];
+	_backBufferResidencySet = [_pDevice newResidencySetWithDescriptor:residencySetDesc error:&error];
+	if (!_backBufferResidencySet) {
+		NSLog(@"Failed to create residency set for the back buffer: %@", error);
+	}
+	[_pCommandQueue addResidencySet:_backBufferResidencySet];
+	
+	MTL4ArgumentTableDescriptor* argTableDesc = [[MTL4ArgumentTableDescriptor alloc] init];
+	[argTableDesc setMaxTextureBindCount:1];
+	[argTableDesc setMaxSamplerStateBindCount:1];
+	_backBufferArgTable = [_pDevice newArgumentTableWithDescriptor:argTableDesc error:&error];
+	if (!_backBufferArgTable) {
+		NSLog(@"Failed to create argument table for the back buffer: %@", error);
+	}
+
+	[self recreateBackbufferAndBackingStorage];
 
 	// Shader to present texture to the full screen
 	NSString* fsShaderSource = @"#include <metal_stdlib>\n"
@@ -449,7 +475,6 @@ auto GameModuleChanged(FGameModule& GameModule) -> bool
 								"	return tex.sample(samp, in.uv);\n"
 								"}";
 
-	NSError* error = nil;
 	id<MTLLibrary> library = [_pDevice newLibraryWithSource:fsShaderSource
 												options:nil
 													error:&error];
@@ -459,8 +484,6 @@ auto GameModuleChanged(FGameModule& GameModule) -> bool
 	id<MTLFunction> vertexFunc = [library newFunctionWithName:@"vertex_main"];
 	id<MTLFunction> fragmentFunc = [library newFunctionWithName:@"fragment_main"];
 
-	[self recreateBackbufferAndBackingStorage];
-	
 	// Create a simple sampler
 	MTLSamplerDescriptor* sdesc = [MTLSamplerDescriptor new];
 	sdesc.minFilter = MTLSamplerMinMagFilterNearest;
@@ -501,6 +524,12 @@ auto GameModuleChanged(FGameModule& GameModule) -> bool
 	desc.storageMode = MTLStorageModeShared;   // CPU/GPU visible
 	desc.usage = MTLTextureUsageShaderRead;
 	_backBuffer = [_pDevice newTextureWithDescriptor:desc];
+	
+	[_backBufferResidencySet removeAllAllocations];
+	[_backBufferResidencySet addAllocation:_backBuffer];
+	[_backBufferResidencySet commit];
+	[_backBufferArgTable setTexture:[_backBuffer gpuResourceID] atIndex:0];
+	[_backBufferArgTable setSamplerState:[_backBufferSampler gpuResourceID] atIndex:0];
 }
 
 - (void)createMetalDisplayLink
