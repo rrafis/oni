@@ -52,5 +52,9 @@ project "Oni"
 			"ModelIO.framework",
 			"MetalKit.framework",
 		}
+
+		filter { "action:xcode*" }
+			buildoptions { "-D_RE_XCODE" }
+		filter {}
 	filter {}
 

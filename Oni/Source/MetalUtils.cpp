@@ -13,20 +13,6 @@
 
 namespace Engine::Mesh
 {
-	namespace MDLIO
-	{
-		bool operator==(const FAttributeDesc& Lhs, const FAttributeDesc& Rhs)
-		{
-			return Lhs.Semantic == Rhs.Semantic && Lhs.Type == Rhs.Type && Lhs.Offset == Rhs.Offset && Lhs.Stride == Rhs.Stride
-				&& Lhs.BufferIndex == Rhs.BufferIndex;
-		}
-
-		bool operator!=(const FAttributeDesc& Lhs, const FAttributeDesc& Rhs)
-		{
-			return !(Lhs == Rhs);
-		}
-	} // namespace MDLIO
-
 	namespace Metal
 	{
 		inline auto MapIndexType(EIndexType Type) -> MTL::IndexType
@@ -90,50 +76,67 @@ namespace Engine::Mesh
 			}
 		}
 
-		auto ProcessMeshData(MTL::Device* Device, const MDLIO::FMeshData& MeshData) -> FMeshRenderer
+		auto ProcessMeshData(MTL::Device* Device, const MDLIO::FMeshData& MeshData, u32 MaterialIndexOffset) -> FMeshRenderer
 		{
 			FMeshRenderer MeshRender;
+			MeshRender.VertexBuffer =
+				NS::TransferPtr(Device->newBuffer(MeshData.VertexStream.Data.data(), MeshData.VertexStream.Data.size(), MTL::ResourceStorageModeShared));
+			MeshRender.UniformBuffer = NS::TransferPtr(Device->newBuffer(sizeof(Engine::Mesh::FMeshUniform), MTL::ResourceStorageModeShared));
+			MeshRender.MaterialIndexBuffer = NS::TransferPtr(Device->newBuffer(sizeof(u32) * MeshData.Submeshes.size(), MTL::ResourceStorageModeShared));
 
-			MeshRender.VertexDescriptor = MTL::VertexDescriptor::alloc()->init();
-			std::unordered_map<uint8_t, uint16_t> strideMap;
-			u32 AttrIndex = 0;
-			for (auto& Attr : MeshData.Attributes)
+			NS::Error* error;
+			NS::SharedPtr<MTL::ResidencySetDescriptor> ResSetDesc = NS::TransferPtr(MTL::ResidencySetDescriptor::alloc()->init());
+
+			ResSetDesc->setInitialCapacity(1 + 1 + MeshRender.Submeshes.size()); // Vertex buffer + uniform buffer + Index buffer for each submesh
+			MeshRender.ResidencySet = NS::TransferPtr(Device->newResidencySet(ResSetDesc.get(), &error));
+			if (!MeshRender.ResidencySet)
 			{
-				MeshRender.VertexDescriptor->attributes()->object(AttrIndex)->setFormat(Engine::Mesh::Metal::MapDataType(Attr.Type));
-				MeshRender.VertexDescriptor->attributes()->object(AttrIndex)->setOffset(Attr.Offset);
-				MeshRender.VertexDescriptor->attributes()->object(AttrIndex)->setBufferIndex(Attr.BufferIndex);
-
-				strideMap[Attr.BufferIndex] = Attr.Stride;
-
-				++AttrIndex;
-			}
-			for (auto [k, v] : strideMap)
-			{
-				MeshRender.VertexDescriptor->layouts()->object(k)->setStride(v);
-				MeshRender.VertexDescriptor->layouts()->object(k)->setStepFunction(MTL::VertexStepFunctionPerVertex);
-				MeshRender.VertexDescriptor->layouts()->object(k)->setStepRate(1);
+				NS::String* desc = error->localizedDescription();
+				printf("Shader compile error: %s\n", desc->utf8String());
 			}
 
-			for (auto& Stream : MeshData.Streams)
-			{
-				MTL::Buffer* Buffer = Device->newBuffer(Stream.Data.data(), Stream.Data.size(), MTL::ResourceStorageModeShared);
-				MeshRender.VertexBuffers.emplace_back(Buffer);
-				MeshRender.VertexBufferOffsets.emplace_back(0);
-			}
+			NS::SharedPtr<MTL4::ArgumentTableDescriptor> ArgTableVertDesc = NS::TransferPtr(MTL4::ArgumentTableDescriptor::alloc()->init());
+			ArgTableVertDesc->setMaxBufferBindCount(11);
+			ArgTableVertDesc->setMaxTextureBindCount(0);
+			ArgTableVertDesc->setMaxSamplerStateBindCount(0);
+			MeshRender.ArgTableVert = NS::TransferPtr(Device->newArgumentTable(ArgTableVertDesc.get(), &error));
 
+			MeshRender.ArgTableVert->setAddress(MeshRender.VertexBuffer->gpuAddress(), 0);
+			MeshRender.ArgTableVert->setAddress(MeshRender.UniformBuffer->gpuAddress(), 10);
+			MeshRender.ResidencySet->addAllocation(MeshRender.VertexBuffer.get());
+			MeshRender.ResidencySet->addAllocation(MeshRender.UniformBuffer.get());
+			MeshRender.ResidencySet->addAllocation(MeshRender.MaterialIndexBuffer.get());
+
+			NS::SharedPtr<MTL4::ArgumentTableDescriptor> ArgTableFragDesc = NS::TransferPtr(MTL4::ArgumentTableDescriptor::alloc()->init());
+			ArgTableFragDesc->setMaxBufferBindCount(14);
+			ArgTableFragDesc->setMaxTextureBindCount(0);
+			ArgTableFragDesc->setMaxSamplerStateBindCount(1);
+
+			u32 Idx = 0;
+			u32* MatIndex = static_cast<u32*>(MeshRender.MaterialIndexBuffer->contents());
 			for (auto& Submesh : MeshData.Submeshes)
 			{
-				MTL::Buffer* Buffer = Device->newBuffer(Submesh.Indices.data(), Submesh.Indices.size(), MTL::ResourceStorageModeShared);
+				MatIndex[Idx] = Submesh.MaterialIndex + MaterialIndexOffset;
 
 				FMeshRenderer::FSubmesh Sub;
 				Sub.IndexType = Engine::Mesh::Metal::MapIndexType(Submesh.IndexType);
 				Sub.IndexCount = Submesh.IndexCount;
-				Sub.IndexBuffer = Buffer;
-				Sub.MaterialIndex = Submesh.MaterialIndex;
-				Sub.bDoubleSided = true;//MeshData.Materials[Sub.MaterialIndex].DoubleSided;
+				Sub.IndexBuffer = NS::TransferPtr(Device->newBuffer(Submesh.Indices.data(), Submesh.Indices.size(), MTL::ResourceStorageModeShared));
+				Sub.bDoubleSided = true; // MeshData.Materials[Sub.MaterialIndex].DoubleSided;
 				Sub.bWindingOrderClockWise = true;
+
+				Sub.IbSize = Sub.IndexCount * (sizeof(u16) * (u32)(Sub.IndexType + 1));
+				Sub.IbAddress = Sub.IndexBuffer->gpuAddress();
+
+				Sub.ArgTableFrag = NS::TransferPtr(Device->newArgumentTable(ArgTableFragDesc.get(), &error));
+				Sub.ArgTableFrag->setAddress(MeshRender.MaterialIndexBuffer->gpuAddress() + Idx * sizeof(u32), 13);
+				MeshRender.ResidencySet->addAllocation(Sub.IndexBuffer.get());
+
 				MeshRender.Submeshes.emplace_back(Sub);
+
+				Idx++;
 			}
+			MeshRender.ResidencySet->commit();
 
 			return MeshRender;
 		}

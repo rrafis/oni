@@ -5,7 +5,7 @@ project "Jolt"
 	rtti "Off"
 	exceptionhandling "Off"
 
-	includedirs {
+	externalincludedirs {
 		"JoltPhysics",
 	}
 

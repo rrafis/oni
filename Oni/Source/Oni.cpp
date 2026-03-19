@@ -242,9 +242,15 @@ struct FMesh
 struct FGameState
 {
 	MTL::Device* Device;
-	MTL::CommandQueue* Queue;
-	MTL::RenderPassDescriptor* DrawableRenderPass;
-	MTL::RenderPipelineState* Pipeline;
+	NS::SharedPtr<MTL4::CommandQueue> Queue;
+	NS::SharedPtr<MTL4::CommandAllocator> Allocator;
+	NS::SharedPtr<MTL4::RenderPassDescriptor> DrawableRenderPass;
+	NS::SharedPtr<MTL::ResidencySet> ResidencySet;
+
+	NS::SharedPtr<MTL4::Compiler> ShaderCompiler;
+	NS::SharedPtr<MTL4::CompilerTaskOptions> ShaderCompOptions;
+	NS::SharedPtr<MTL::RenderPipelineState> Pipeline;
+
 	MTL::PixelFormat DepthFormat;
 	MTL::Texture* DepthTexture;
 	MTL::DepthStencilState* DepthStencilState;
@@ -253,7 +259,6 @@ struct FGameState
 
 	MTL::SamplerState* Sampler;
 	MTL::Buffer* MaterialBuffer;
-	MTL::Buffer* ArgumentBuffer;
 
 	std::vector<MTL::Texture*> Textures;
 	std::vector<Engine::Mesh::FRenderMaterial> Materials;
@@ -296,7 +301,11 @@ struct FGameState
 	glm::vec3 LastRenderedPlayerPos; // Last smoothed render position for player (used to reduce jitter)
 };
 
+#ifdef _RE_XCODE
+constexpr auto ContentPath = "../../../Content";
+#else
 constexpr auto ContentPath = "Content";
+#endif
 
 struct FTexture
 {
@@ -398,14 +407,9 @@ auto LoadMesh(FGameState& State, MTL::Device* Device, const char* RootPath, cons
 	auto LoadPath = std::filesystem::path() / ContentPath / RootPath / Name;
 	auto Mesh = Engine::Mesh::MDLIO::ExportMeshFromPath(Device, LoadPath.c_str());
 
-	auto Result = Engine::Mesh::Metal::ProcessMeshData(Device, Mesh);
-
 	// HACK: Make stornger references for material index
 	auto MaterailIndexOffset = State.Materials.size();
-	for (auto& Submesh : Result.Submeshes)
-	{
-		Submesh.MaterialIndex += MaterailIndexOffset;
-	}
+	auto Result = Engine::Mesh::Metal::ProcessMeshData(Device, Mesh, MaterailIndexOffset);
 
 	for (auto& Material : Mesh.Materials)
 	{
@@ -441,13 +445,12 @@ auto LoadMesh(FGameState& State, MTL::Device* Device, const char* RootPath, cons
 auto LoadBox(FGameState& State, MTL::Device* Device, glm::vec3 Extent, glm::uvec3 Segments) -> Engine::Mesh::FMeshRenderer
 {
 	auto Mesh = Engine::Mesh::MDLIO::ExportBox(Device, Extent, Segments);
-	auto Result = Engine::Mesh::Metal::ProcessMeshData(Device, Mesh);
-
 	// HACK: Make stornger references for material index
 	auto MaterailIndexOffset = State.Materials.size();
+	auto Result = Engine::Mesh::Metal::ProcessMeshData(Device, Mesh, MaterailIndexOffset);
+
 	for (auto& Submesh : Result.Submeshes)
 	{
-		Submesh.MaterialIndex += MaterailIndexOffset;
 		Submesh.bWireframe = true;
 	}
 
@@ -472,13 +475,12 @@ auto LoadBox(FGameState& State, MTL::Device* Device, glm::vec3 Extent, glm::uvec
 auto LoadCapsule(FGameState& State, MTL::Device* Device, glm::vec3 Extent, glm::uvec3 Segments) -> Engine::Mesh::FMeshRenderer
 {
 	auto Mesh = Engine::Mesh::MDLIO::ExportCapsule(Device, Extent, Segments);
-	auto Result = Engine::Mesh::Metal::ProcessMeshData(Device, Mesh);
-
 	// HACK: Make stornger references for material index
 	auto MaterailIndexOffset = State.Materials.size();
+	auto Result = Engine::Mesh::Metal::ProcessMeshData(Device, Mesh, MaterailIndexOffset);
+
 	for (auto& Submesh : Result.Submeshes)
 	{
-		Submesh.MaterialIndex += MaterailIndexOffset;
 		Submesh.bWireframe = true;
 	}
 
@@ -524,8 +526,12 @@ RE_API auto GameInitialize(FGameMemory& Memory) -> void
 	State.Height = Props.Height;
 
 	State.Device = MTL::CreateSystemDefaultDevice();
-	State.Queue = State.Device->newCommandQueue();
-	State.DrawableRenderPass = MTL::RenderPassDescriptor::alloc()->init();
+	State.Queue = NS::TransferPtr(State.Device->newMTL4CommandQueue());
+	State.Allocator = NS::TransferPtr(State.Device->newCommandAllocator());
+	State.DrawableRenderPass = NS::TransferPtr(MTL4::RenderPassDescriptor::alloc()->init());
+
+	MTL::ResidencySetDescriptor* ResidencySetDesc = MTL::ResidencySetDescriptor::alloc()->init();
+	State.ResidencySet = NS::TransferPtr(State.Device->newResidencySet(ResidencySetDesc, nullptr));
 
 	State.DummyTexture = CreateDummyTexture(State);
 
@@ -587,11 +593,33 @@ RE_API auto GameInitialize(FGameMemory& Memory) -> void
 	State.CameraYaw = 0.0f;
 	State.CameraPitch = 10.0f; // degrees, slight downward angle
 
+	{
+		MTL::SamplerDescriptor* sdesc = MTL::SamplerDescriptor::alloc()->init();
+		sdesc->setMinFilter(MTL::SamplerMinMagFilterNearest);
+		sdesc->setMagFilter(MTL::SamplerMinMagFilterNearest);
+		sdesc->setSAddressMode(MTL::SamplerAddressModeClampToEdge);
+		sdesc->setTAddressMode(MTL::SamplerAddressModeClampToEdge);
+		sdesc->setSupportArgumentBuffers(true);
+		State.Sampler = State.Device->newSamplerState(sdesc);
+		sdesc->release();
+	}
+
 	State.MaterialBuffer =
 		State.Device->newBuffer(State.Materials.data(), State.Materials.size() * sizeof(Engine::Mesh::FRenderMaterial), MTL::ResourceStorageModeShared);
 	{
 		NS::Error* error;
-		NS::String* ShaderPath = NS::String::alloc()->init("Content/Shaders/BuiltIn.MaterialShader.metallib", NS::StringEncoding::UTF8StringEncoding);
+
+		State.ShaderCompOptions = NS::RetainPtr(MTL4::CompilerTaskOptions::alloc()->init());
+		NS::SharedPtr<MTL4::CompilerDescriptor> CompilerDesc = NS::RetainPtr(MTL4::CompilerDescriptor::alloc()->init());
+		State.ShaderCompiler = NS::RetainPtr(State.Device->newCompiler(CompilerDesc.get(), &error));
+		if (!State.ShaderCompiler)
+		{
+			NS::String* desc = error->localizedDescription();
+			printf("Compiler create error: %s\n", desc->utf8String());
+		}
+
+		auto LoadPath = std::filesystem::path() / ContentPath / "Shaders" / "BuiltIn.MaterialShader.metallib";
+		NS::String* ShaderPath = NS::String::alloc()->init(LoadPath.c_str(), NS::StringEncoding::UTF8StringEncoding);
 		auto Shader = State.Device->newLibrary(ShaderPath, &error);
 		if (!Shader)
 		{
@@ -606,43 +634,24 @@ RE_API auto GameInitialize(FGameMemory& Memory) -> void
 			}
 		}
 
-		auto vertFunc = Shader->newFunction(NS::String::alloc()->init("vertex_main", NS::StringEncoding::UTF8StringEncoding));
-		auto fragFunc = Shader->newFunction(NS::String::alloc()->init("fragment_main", NS::StringEncoding::UTF8StringEncoding));
+		MTL4::LibraryFunctionDescriptor* vertFuncDesc = MTL4::LibraryFunctionDescriptor::alloc()->init();
+		vertFuncDesc->setLibrary(Shader);
+		vertFuncDesc->setName(NS::String::alloc()->init("vertex_main", NS::StringEncoding::UTF8StringEncoding));
 
-		MTL::SamplerDescriptor* sdesc = MTL::SamplerDescriptor::alloc()->init();
-		sdesc->setMinFilter(MTL::SamplerMinMagFilterNearest);
-		sdesc->setMagFilter(MTL::SamplerMinMagFilterNearest);
-		sdesc->setSAddressMode(MTL::SamplerAddressModeClampToEdge);
-		sdesc->setTAddressMode(MTL::SamplerAddressModeClampToEdge);
-		sdesc->setSupportArgumentBuffers(true);
-		State.Sampler = State.Device->newSamplerState(sdesc);
-		sdesc->release();
+		MTL4::LibraryFunctionDescriptor* fragFuncDesc = MTL4::LibraryFunctionDescriptor::alloc()->init();
+		fragFuncDesc->setLibrary(Shader);
+		fragFuncDesc->setName(NS::String::alloc()->init("fragment_main", NS::StringEncoding::UTF8StringEncoding));
 
-		auto ArgEncoder = fragFunc->newArgumentEncoder(12);
-		State.ArgumentBuffer = State.Device->newBuffer(ArgEncoder->encodedLength(), MTL::ResourceStorageModeShared);
-		ArgEncoder->setArgumentBuffer(State.ArgumentBuffer, 0);
-		ArgEncoder->setSamplerState(State.Sampler, 0);
-		ArgEncoder->setBuffer(State.MaterialBuffer, 0, 1);
-		ArgEncoder->release();
-
-		MTL::RenderPipelineDescriptor* pipeDesc = MTL::RenderPipelineDescriptor::alloc()->init();
-		pipeDesc->setVertexFunction(vertFunc);
-		pipeDesc->setFragmentFunction(fragFunc);
-		pipeDesc->setVertexDescriptor(State.Meshes[0].Render.VertexDescriptor);
+		MTL4::RenderPipelineDescriptor* pipeDesc = MTL4::RenderPipelineDescriptor::alloc()->init();
+		pipeDesc->setVertexFunctionDescriptor(vertFuncDesc);
+		pipeDesc->setFragmentFunctionDescriptor(fragFuncDesc);
 		pipeDesc->colorAttachments()->object(0)->setPixelFormat(MTL::PixelFormatRGBA16Float);
-		pipeDesc->setDepthAttachmentPixelFormat(State.DepthFormat);
-		State.Pipeline = State.Device->newRenderPipelineState(pipeDesc, &error);
+
+		State.Pipeline = NS::RetainPtr(State.ShaderCompiler->newRenderPipelineState(pipeDesc, State.ShaderCompOptions.get(), &error));
 		if (!State.Pipeline)
 		{
-			if (error)
-			{
-				NS::String* desc = error->localizedDescription();
-				printf("Shader compile error: %s\n", desc->utf8String());
-			}
-			else
-			{
-				printf("Shader compile failed with unknown error.\n");
-			}
+			NS::String* desc = error->localizedDescription();
+			printf("Shader compile error: %s\n", desc->utf8String());
 		}
 	}
 
@@ -886,7 +895,19 @@ RE_API auto GameUpdateAndRender(FGameMemory& Memory, f32 DeltaTime, FOffscreenBu
 
 	State.Capsule->Position = State.Player->Position + glm::vec3(0.0f, 0.875f, 0.0f);
 
-	MTL::CommandBuffer* Cmd = State.Queue->commandBuffer();
+	MTL4::CommandBuffer* Cmd = State.Device->newCommandBuffer();
+	Cmd->beginCommandBuffer(State.Allocator.get());
+	Cmd->useResidencySet(State.ResidencySet.get());
+
+	{
+		State.ResidencySet->removeAllAllocations();
+		for (auto& Tex : State.Textures)
+		{
+			State.ResidencySet->addAllocation(Tex);
+		}
+		State.ResidencySet->addAllocation(State.MaterialBuffer);
+		State.ResidencySet->commit();
+	}
 
 	{
 		State.DrawableRenderPass->colorAttachments()->object(0)->setTexture(Drawable->texture());
@@ -894,18 +915,9 @@ RE_API auto GameUpdateAndRender(FGameMemory& Memory, f32 DeltaTime, FOffscreenBu
 		State.DrawableRenderPass->colorAttachments()->object(0)->setLoadAction(MTL::LoadActionClear);
 		State.DrawableRenderPass->colorAttachments()->object(0)->setStoreAction(MTL::StoreActionStore);
 
-		MTL::RenderCommandEncoder* Encoder = Cmd->renderCommandEncoder(State.DrawableRenderPass);
-		Encoder->setRenderPipelineState(State.Pipeline);
+		MTL4::RenderCommandEncoder* Encoder = Cmd->renderCommandEncoder(State.DrawableRenderPass.get());
+		Encoder->setRenderPipelineState(State.Pipeline.get());
 		Encoder->setDepthStencilState(State.DepthStencilState);
-
-		for (auto& Tex : State.Textures)
-		{
-			Encoder->useResource(Tex, MTL::ResourceUsageSample);
-		}
-		Encoder->useResource(State.MaterialBuffer, MTL::ResourceUsageRead);
-
-		Encoder->setFragmentBuffer(State.MaterialBuffer, 0, 11);
-		Encoder->setFragmentBuffer(State.ArgumentBuffer, 0, 12);
 
 		for (auto& Mesh : State.Meshes)
 		{
@@ -914,24 +926,35 @@ RE_API auto GameUpdateAndRender(FGameMemory& Memory, f32 DeltaTime, FOffscreenBu
 				* glm::rotate(glm::mat4(1), glm::radians(Mesh.Rotation.x), glm::vec3(1.0f, 0.0f, 0.0f));
 			State.MVP = State.Projection * State.View * Model;
 
-			Encoder->setVertexBytes(&State.MVP, sizeof(State.MVP), 10);
-			Encoder->setVertexBuffers(
-				Mesh.Render.VertexBuffers.data(), (NS::UInteger*)Mesh.Render.VertexBufferOffsets.data(), NS::Range::Make(0, Mesh.Render.VertexBuffers.size()));
-			for (auto& Submesh : Mesh.Render.Submeshes)
+			auto MeshUniform = static_cast<Engine::Mesh::FMeshUniform*>(Mesh.Render.UniformBuffer->contents());
+			MeshUniform->MVP = State.MVP;
+
+			Cmd->useResidencySet(Mesh.Render.ResidencySet.get());
+			Encoder->setArgumentTable(Mesh.Render.ArgTableVert.get(), MTL::RenderStageVertex);
+
+			for (auto& Sub : Mesh.Render.Submeshes)
 			{
-				Encoder->setTriangleFillMode(Submesh.bWireframe ? MTL::TriangleFillModeLines : MTL::TriangleFillModeFill);
-				Encoder->setFragmentBytes(&Submesh.MaterialIndex, sizeof(u32), 13);
-				Encoder->setCullMode(Submesh.bDoubleSided ? MTL::CullModeNone : MTL::CullModeBack);
-				Encoder->setFrontFacingWinding(Submesh.bWindingOrderClockWise ? MTL::WindingClockwise : MTL::WindingCounterClockwise);
-				Encoder->drawIndexedPrimitives(MTL::PrimitiveTypeTriangle, Submesh.IndexCount, Submesh.IndexType, Submesh.IndexBuffer, 0);
+				Sub.ArgTableFrag->setSamplerState(State.Sampler->gpuResourceID(), 0);
+				Sub.ArgTableFrag->setAddress(State.MaterialBuffer->gpuAddress(), 11);
+				Encoder->setArgumentTable(Sub.ArgTableFrag.get(), MTL::RenderStageFragment);
+
+				Encoder->setTriangleFillMode(Sub.bWireframe ? MTL::TriangleFillModeLines : MTL::TriangleFillModeFill);
+				Encoder->setCullMode(Sub.bDoubleSided ? MTL::CullModeNone : MTL::CullModeBack);
+				Encoder->setFrontFacingWinding(Sub.bWindingOrderClockWise ? MTL::WindingClockwise : MTL::WindingCounterClockwise);
+				Encoder->drawIndexedPrimitives(MTL::PrimitiveTypeTriangle, Sub.IndexCount, Sub.IndexType, Sub.IbAddress, Sub.IbSize, 1);
 			}
 		}
 		Encoder->endEncoding();
 	}
 
-	Cmd->presentDrawable(Drawable);
-	Cmd->encodeSignalEvent(State.PacingEvent.get(), State.PacingTimeStampIndex);
-	Cmd->commit();
+	Cmd->endCommandBuffer();
+	std::vector<MTL4::CommandBuffer*> CmdBuffers = { Cmd };
+	State.Queue->wait(Drawable);
+	State.Queue->commit(CmdBuffers.data(), CmdBuffers.size());
+	State.Queue->signalDrawable(Drawable);
+	Drawable->present();
+
+	State.Queue->signalEvent(State.PacingEvent.get(), State.PacingTimeStampIndex);
 
 	pool->release();
 }

@@ -207,30 +207,13 @@ namespace Engine::Mesh
 			out.Name = mdlMesh.name ? std::string([mdlMesh.name UTF8String]) : std::string();
 			out.VertexCount = (uint32_t)mtkMesh.vertexCount;
 
-			// 1) Vertex descriptor -> FAttributeDesc
+			// 1) Vertex buffer
+			assert(mtkMesh.vertexBuffers.count == 1);
 			MDLVertexDescriptor* vdesc = mtkMesh.vertexDescriptor;
-			for (MDLVertexAttribute* attr in vdesc.attributes)
-			{
-				if (!attr || attr.bufferIndex == NSNotFound)
-					continue;
-				FAttributeDesc A{};
-				A.Semantic = MapMDLSemanticToSemantic(attr.name);
-				A.Type = MapMDLFormatToDataType(attr.format);
-				A.Offset = (uint16_t)attr.offset;
-				A.Stride = (uint16_t)[vdesc.layouts[attr.bufferIndex] stride];
-				A.BufferIndex = (uint8_t)attr.bufferIndex;
-				if (A.Semantic != ESemantic::Invalid && A.Type != EDataType::Invalid)
-				{
-					out.Attributes.push_back(A);
-				}
-			}
-
-			// 2) Vertex buffers
-			out.Streams.resize(mtkMesh.vertexBuffers.count);
 			for (NSUInteger i = 0; i < mtkMesh.vertexBuffers.count; ++i)
 			{
 				MTKMeshBuffer* mbuf = mtkMesh.vertexBuffers[i];
-				FVertexStream& vs = out.Streams[i];
+				FVertexStream& vs = out.VertexStream;
 				vs.Stride = (uint32_t)[vdesc.layouts[i] stride];
 				id<MTLBuffer> mtlBuf = [(id<MTLBuffer>)mbuf.buffer retain];
 				size_t len = mbuf.length;
@@ -239,7 +222,7 @@ namespace Engine::Mesh
 				[mtlBuf release];
 			}
 
-			// 3) Materials: build table and reference indices
+			// 2) Materials: build table and reference indices
 			// Build a material map to dedupe
 			std::unordered_map<MDLMaterial*, uint32_t> matIndex;
 			for (MDLSubmesh* sm in mdlMesh.submeshes)
@@ -253,7 +236,7 @@ namespace Engine::Mesh
 				}
 			}
 
-			// 4) Submeshes and indices
+			// 3) Submeshes and indices
 			for (NSUInteger i = 0; i < mtkMesh.submeshes.count; ++i)
 			{
 				MTKSubmesh* msm = mtkMesh.submeshes[i];
@@ -282,6 +265,35 @@ namespace Engine::Mesh
 			return out;
 		}
 
+		auto GetVertexDescriptor() -> MDLVertexDescriptor*
+		{
+			auto vertexDescriptor = [[MDLVertexDescriptor alloc] init];
+			// Position
+			vertexDescriptor.attributes[0] = [[MDLVertexAttribute alloc] initWithName:MDLVertexAttributePosition
+																				format:MDLVertexFormatFloat3
+																				offset:0
+																		bufferIndex:0];
+			// Normal
+			vertexDescriptor.attributes[1] = [[MDLVertexAttribute alloc] initWithName:MDLVertexAttributeNormal
+																				format:MDLVertexFormatFloat3
+																				offset:12
+																		bufferIndex:0];
+			// Tangent
+			vertexDescriptor.attributes[2] = [[MDLVertexAttribute alloc] initWithName:MDLVertexAttributeTangent
+																				format:MDLVertexFormatFloat3
+																				offset:24
+																		bufferIndex:0];
+			// UV
+			vertexDescriptor.attributes[3] = [[MDLVertexAttribute alloc] initWithName:MDLVertexAttributeTextureCoordinate
+																				format:MDLVertexFormatFloat2
+																				offset:36
+																		bufferIndex:0];
+			// Stride = size of your vertex struct (e.g., 44 bytes)
+			vertexDescriptor.layouts[0] = [[MDLVertexBufferLayout alloc] initWithStride:44];
+			[vertexDescriptor setPackedOffsets];
+			return vertexDescriptor;
+		}
+
 		auto ExportSphere(MTL::Device* Device, f32 Radius, u32 Segmentes) -> FMeshData
 		{
 			@autoreleasepool
@@ -299,6 +311,7 @@ namespace Engine::Mesh
 				[mdlMesh addTangentBasisForTextureCoordinateAttributeNamed:MDLVertexAttributeTextureCoordinate
 														normalAttributeNamed:MDLVertexAttributeNormal
 														tangentAttributeNamed:MDLVertexAttributeTangent];
+				mdlMesh.vertexDescriptor = GetVertexDescriptor();
 
 				NSError* err = nil;
 				// Assign a simple material
@@ -336,6 +349,7 @@ namespace Engine::Mesh
 				[mdlMesh addTangentBasisForTextureCoordinateAttributeNamed:MDLVertexAttributeTextureCoordinate
 														normalAttributeNamed:MDLVertexAttributeNormal
 														tangentAttributeNamed:MDLVertexAttributeTangent];
+				mdlMesh.vertexDescriptor = GetVertexDescriptor();
 
 				NSError* err = nil;
 				// Assign a simple material
@@ -374,6 +388,7 @@ namespace Engine::Mesh
 				[mdlMesh addTangentBasisForTextureCoordinateAttributeNamed:MDLVertexAttributeTextureCoordinate
 														normalAttributeNamed:MDLVertexAttributeNormal
 														tangentAttributeNamed:MDLVertexAttributeTangent];
+				mdlMesh.vertexDescriptor = GetVertexDescriptor();
 
 				NSError* err = nil;
 				// Assign a simple material
@@ -403,8 +418,9 @@ namespace Engine::Mesh
 				NSString* nsPath = [NSString stringWithUTF8String:Path];
 				NSURL* url = [NSURL fileURLWithPath:nsPath];
 
+				auto vertexDescriptor = GetVertexDescriptor();
 				// Load the asset
-				MDLAsset* asset = [[MDLAsset alloc] initWithURL:url vertexDescriptor:nil bufferAllocator:allocator];
+				MDLAsset* asset = [[MDLAsset alloc] initWithURL:url vertexDescriptor:vertexDescriptor bufferAllocator:allocator];
 				MDLMesh* mdlMesh = (MDLMesh*)[asset objectAtIndex:0];
 
 				// Generate tangents for PBR normal mapping
@@ -413,6 +429,7 @@ namespace Engine::Mesh
 				[mdlMesh addTangentBasisForTextureCoordinateAttributeNamed:MDLVertexAttributeTextureCoordinate
 														normalAttributeNamed:MDLVertexAttributeNormal
 														tangentAttributeNamed:MDLVertexAttributeTangent];
+				mdlMesh.vertexDescriptor = vertexDescriptor;
 
 				auto Mesh = ExportMesh((id<MTLDevice>)Device, mdlMesh);
 

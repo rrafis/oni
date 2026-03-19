@@ -53,25 +53,34 @@ namespace Engine::Mesh
 		UInt32
 	};
 
+	struct alignas(16) FMeshUniform
+	{
+		glm::mat4 MVP;
+	};
+
 	struct FMeshRenderer
 	{
 		struct FSubmesh
 		{
 			MTL::IndexType IndexType;
 			u32 IndexCount;
-			MTL::Buffer* IndexBuffer;
+			NS::SharedPtr<MTL::Buffer> IndexBuffer;
+			NS::SharedPtr<MTL4::ArgumentTable> ArgTableFrag;
 
-			u32 MaterialIndex;
+			u32 IbSize;
+			MTL::GPUAddress IbAddress;
 
 			bool bDoubleSided;
 			bool bWindingOrderClockWise;
 			bool bWireframe = false;
 		};
 
-		MTL::VertexDescriptor* VertexDescriptor;
-		std::vector<MTL::Buffer*> VertexBuffers;
-		std::vector<u32> VertexBufferOffsets;
 		std::vector<FSubmesh> Submeshes;
+		NS::SharedPtr<MTL::Buffer> VertexBuffer;
+		NS::SharedPtr<MTL::Buffer> UniformBuffer;
+		NS::SharedPtr<MTL::Buffer> MaterialIndexBuffer;
+		NS::SharedPtr<MTL::ResidencySet> ResidencySet;
+		NS::SharedPtr<MTL4::ArgumentTable> ArgTableVert;
 	};
 
 	struct alignas(16) FRenderMaterial
@@ -90,17 +99,6 @@ namespace Engine::Mesh
 
 	namespace MDLIO
 	{
-		struct FAttributeDesc
-		{
-			ESemantic Semantic;
-			EDataType Type;
-			u16 Offset;		// byte offset in the stream
-			u16 Stride;		// byte stride of the stream
-			u8 BufferIndex; // which vertex stream
-		};
-		bool operator==(const FAttributeDesc& Lhs, const FAttributeDesc& Rhs);
-		bool operator!=(const FAttributeDesc& Lhs, const FAttributeDesc& Rhs);
-
 		struct FVertexStream
 		{
 			u32 Stride;
@@ -142,8 +140,7 @@ namespace Engine::Mesh
 		struct FMeshData
 		{
 			u32 VertexCount = 0;
-			std::vector<FAttributeDesc> Attributes;
-			std::vector<FVertexStream> Streams;
+			FVertexStream VertexStream;
 			std::vector<FSubmeshDesc> Submeshes;
 			std::vector<FPBRMaterial> Materials;
 			std::string Name;
@@ -157,6 +154,6 @@ namespace Engine::Mesh
 
 	namespace Metal
 	{
-		auto ProcessMeshData(MTL::Device* Device, const struct MDLIO::FMeshData& MeshData) -> FMeshRenderer;
+		auto ProcessMeshData(MTL::Device* Device, const struct MDLIO::FMeshData& MeshData, u32 MaterialIndexOffset = 0) -> FMeshRenderer;
 	} // namespace Metal
 } // namespace Engine::Mesh
