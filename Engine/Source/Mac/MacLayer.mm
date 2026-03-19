@@ -243,6 +243,7 @@ auto GameModuleChanged(FGameModule& GameModule) -> bool
 // NOTE: Raw input polling
 - (void)pollInput
 {
+	bool bGamepadConnected = false;
 	if (_nativeGamepad)
 	{
 		GCExtendedGamepad* controllerInput = _nativeGamepad.extendedGamepad;
@@ -253,6 +254,7 @@ auto GameModuleChanged(FGameModule& GameModule) -> bool
 
 		if (controllerInput)
 		{
+			bGamepadConnected = true;
 			[self macInputUpdateButtonState:_gamepad.GamepadA Input:controllerInput.buttonA];
 			[self macInputUpdateButtonState:_gamepad.GamepadB Input:controllerInput.buttonB];
 			[self macInputUpdateButtonState:_gamepad.GamepadX Input:controllerInput.buttonX];
@@ -275,18 +277,20 @@ auto GameModuleChanged(FGameModule& GameModule) -> bool
 		}
 	}
 
-	if (_keyboard)
+	if (_keyboard && !bGamepadConnected)
 	{
 		auto buttonW = [_keyboard.keyboardInput buttonForKeyCode:GCKeyCodeKeyW];
 		auto buttonS = [_keyboard.keyboardInput buttonForKeyCode:GCKeyCodeKeyS];
 		auto buttonA = [_keyboard.keyboardInput buttonForKeyCode:GCKeyCodeKeyA];
 		auto buttonD = [_keyboard.keyboardInput buttonForKeyCode:GCKeyCodeKeyD];
 		auto buttonR = [_keyboard.keyboardInput buttonForKeyCode:GCKeyCodeKeyR];
+		auto buttonSpacebar = [_keyboard.keyboardInput buttonForKeyCode:GCKeyCodeSpacebar];
 		[self macInputUpdateButtonState:_gamepad.GamepadDpadUp Input:buttonW];
 		[self macInputUpdateButtonState:_gamepad.GamepadDpadDown Input:buttonS];
 		[self macInputUpdateButtonState:_gamepad.GamepadDpadLeft Input:buttonA];
 		[self macInputUpdateButtonState:_gamepad.GamepadDpadRight Input:buttonD];
 		[self macInputUpdateButtonState:_gamepad.GamepadOption Input:buttonR];
+		[self macInputUpdateButtonState:_gamepad.GamepadA Input:buttonSpacebar];
 	}
 
 	if (_mouse)

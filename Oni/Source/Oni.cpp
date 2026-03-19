@@ -13,6 +13,7 @@
 #include <stb_image.h>
 
 #include "MeshUtils.h"
+#include "PlayerController.h"
 #include <Foundation/Foundation.hpp>
 #include <Metal/Metal.hpp>
 #include <MetalFX/MetalFX.hpp>
@@ -34,12 +35,15 @@
 #include <Jolt/Physics/Body/BodyActivationListener.h>
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
 #include <Jolt/Physics/Character/Character.h>
+#include <Jolt/Physics/Collision/CastResult.h>
+#include <Jolt/Physics/Collision/RayCast.h>
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
 #include <Jolt/Physics/Collision/Shape/SphereShape.h>
 #include <Jolt/Physics/PhysicsSettings.h>
 #include <Jolt/Physics/PhysicsSystem.h>
 #include <Jolt/RegisterTypes.h>
+
 namespace ph
 {
 	// Callback for traces, connect this to your own trace function if you have one
@@ -273,16 +277,23 @@ struct FGameState
 	u32 Width;
 	u32 Height;
 
+	// Camera control
+	float CameraYaw;
+	float CameraPitch;
+
 	JPH::PhysicsSystem PhysicsSystem;
 	JPH::TempAllocatorImpl* TempAllocator;
 	JPH::JobSystemThreadPool JobSystem;
 	JPH::BodyID PlayerCapsuleID;
 	JPH::Body* Floor;
+	bool bWasJumpPressed;
 	ph::MyBodyActivationListener BodyActivationListener;
 	ph::MyContactListener ContactListener;
 	ph::ObjectLayerPairFilterImpl ObjectVsObjectLayerFilter;
 	ph::ObjectVsBroadPhaseLayerFilterImpl ObjectVsBroadphaseLayerFilter;
 	ph::BPLayerInterfaceImpl BroadPhaseLayerInterface;
+
+	glm::vec3 LastRenderedPlayerPos; // Last smoothed render position for player (used to reduce jitter)
 };
 
 constexpr auto ContentPath = "Content";
@@ -563,10 +574,18 @@ RE_API auto GameInitialize(FGameMemory& Memory) -> void
 	State.Capsule = &State.Meshes[3];
 	State.Player->PlayerAccelerationRate = 20.0f;
 	State.Player->PlayerFrictionCoeficient = 5.0f;
+	State.bWasJumpPressed = false;
+
+	// Initialize last rendered pos to current player position to avoid snap on first frame
+	State.LastRenderedPlayerPos = State.Player->Position;
 
 	State.FOV = 60.f;
 	State.Projection = glm::perspectiveFov(glm::radians(State.FOV), (f32)Props.Width, (f32)Props.Height, 0.01f * s_UnitsInMeter, 1000.0f * s_UnitsInMeter);
 	State.View = glm::lookAtLH(State.CameraPosition * s_UnitsInMeter, State.CameraPosition * s_UnitsInMeter + glm::vec3(0, 0, 1), glm::vec3(0, 1, 0));
+
+	// Initialize camera orientation
+	State.CameraYaw = 0.0f;
+	State.CameraPitch = 10.0f; // degrees, slight downward angle
 
 	State.MaterialBuffer =
 		State.Device->newBuffer(State.Materials.data(), State.Materials.size() * sizeof(Engine::Mesh::FRenderMaterial), MTL::ResourceStorageModeShared);
@@ -737,12 +756,11 @@ RE_API auto GameInitialize(FGameMemory& Memory) -> void
 		// Note that this uses the shorthand version of creating and adding a body to the world
 		JPH::BodyCreationSettings capsule_settings(
 			new JPH::CapsuleShape(0.875f, 0.25f), JPH::RVec3(0.0f, 0.0f, -2.0f), JPH::Quat::sIdentity(), JPH::EMotionType::Dynamic, ph::Layers::MOVING);
-		// capsule_settings.mOverrideMassProperties = JPH::EOverrideMassProperties::MassAndInertiaProvided;
-		// capsule_settings.mMassPropertiesOverride.mMass = 80.0f;
-		// capsule_settings.mFriction = 0.99f;
-		// capsule_settings.mLinearDamping = 0.15f;
-		// capsule_settings.mAngularDamping = 0.15f;
-		// capsule_settings.mGravityFactor = 20.0f;
+		// Tuning for stability: friction + linear/angular damping
+		// Do not override mass by default to keep Jolt's defaults sensible
+		capsule_settings.mFriction = 0.9f;
+		capsule_settings.mLinearDamping = 0.45f; // stronger damping to reduce jitter
+		capsule_settings.mAngularDamping = 0.45f;
 		State.PlayerCapsuleID = body_interface.CreateAndAddBody(capsule_settings, JPH::EActivation::Activate);
 		// body_interface.SetLinearVelocity(State.PlayerCapsuleID, JPH::Vec3(0.0f, 0.0f, 0.0f));
 		// body_interface.SetFriction(State.PlayerCapsuleID, State.Player->PlayerFrictionCoeficient);
@@ -792,65 +810,77 @@ RE_API auto GameUpdateAndRender(FGameMemory& Memory, f32 DeltaTime, FOffscreenBu
 
 		State.Projection = glm::perspectiveFov(glm::radians(State.FOV), (f32)State.Width, (f32)State.Height, 0.01f * s_UnitsInMeter, 1000.0f * s_UnitsInMeter);
 	}
-
-	// Move player
-	{
-		auto LeftStickAcceleration = glm::vec3(Gamepad.GamepadThumbstickLeft.X, 0.0f, Gamepad.GamepadThumbstickLeft.Y);
-		if (Gamepad.GamepadDpadUp.bPressed)
-		{
-			LeftStickAcceleration.z = 1.0f;
-		}
-		if (Gamepad.GamepadDpadDown.bPressed)
-		{
-			LeftStickAcceleration.z = -1.0f;
-		}
-		if (Gamepad.GamepadDpadRight.bPressed)
-		{
-			LeftStickAcceleration.x = 1.0f;
-		}
-		if (Gamepad.GamepadDpadLeft.bPressed)
-		{
-			LeftStickAcceleration.x = -1.0f;
-		}
-		if (Gamepad.GamepadA.bPressed)
-		{
-			LeftStickAcceleration.y = 1.0f;
-		}
-		if (LeftStickAcceleration.x != 0 || LeftStickAcceleration.y != 0.0 || LeftStickAcceleration.z != 0.0f)
-		{
-			LeftStickAcceleration = glm::normalize(LeftStickAcceleration);
-		}
-		LeftStickAcceleration.x *= State.Player->PlayerAccelerationRate;
-		LeftStickAcceleration.z *= State.Player->PlayerAccelerationRate;
-
-		glm::vec3 frictionAcceleration = State.Player->PlayerFrictionCoeficient * (-State.Player->Velocity);
-		glm::vec3 Up = glm::vec3(0.0f, 1.0f, 0.0f);
-		auto GravityAcceleration = -Up * State.PhysicsSystem.GetGravity().Length();
-		glm::vec3 Acceleration = LeftStickAcceleration + GravityAcceleration + frictionAcceleration;
-
-		State.Player->Velocity += Acceleration * DeltaTime;
-
-		auto& BodyInterface = State.PhysicsSystem.GetBodyInterface();
-		auto CurrentVelocity = BodyInterface.GetLinearVelocity(State.PlayerCapsuleID);
-		auto DesiredVelocity = JPH::Vec3(State.Player->Velocity.x, State.Player->Velocity.y, State.Player->Velocity.z);
-		if (!DesiredVelocity.IsNearZero() || CurrentVelocity.GetY() < 0.0f)
-			DesiredVelocity.SetY(CurrentVelocity.GetY());
-		auto NewVelocity = 0.75f * CurrentVelocity + 0.25f * DesiredVelocity;
-		NewVelocity += JPH::Vec3(0, LeftStickAcceleration.y, 0);
-		BodyInterface.SetLinearVelocity(State.PlayerCapsuleID, NewVelocity);
-	}
+	// Player movement is handled by PlayerController module
+	PlayerCtrl::Update(State.PhysicsSystem, State.PlayerCapsuleID, Gamepad, DeltaTime, State.CameraYaw);
 
 	State.PhysicsSystem.Update(DeltaTime, 4, State.TempAllocator, &State.JobSystem);
 
 	auto& BodyInterface = State.PhysicsSystem.GetBodyInterface();
 	const auto& TempPos = BodyInterface.GetPosition(State.PlayerCapsuleID);
-	State.Player->Position = glm::vec3(TempPos.GetX(), TempPos.GetY(), TempPos.GetZ());
+	glm::vec3 physPos = glm::vec3(TempPos.GetX(), TempPos.GetY(), TempPos.GetZ());
+	// Exponential smoothing to reduce jitter between physics updates and render
+	{
+		const float SmoothSpeed = 18.0f; // larger = faster to reach physics pos
+		float alpha = 1.0f - expf(-SmoothSpeed * DeltaTime);
+		State.Player->Position = glm::mix(State.LastRenderedPlayerPos, physPos, alpha);
+		State.LastRenderedPlayerPos = State.Player->Position;
+	}
+
+	// Update player mesh rotation to face movement direction (smooth)
+	{
+		auto linVel = BodyInterface.GetLinearVelocity(State.PlayerCapsuleID);
+		glm::vec2 velXZ = glm::vec2(linVel.GetX(), linVel.GetZ());
+		float speed = glm::length(velXZ);
+		const float TurnThreshold = 0.25f; // only rotate when moving sufficiently
+		if (speed > TurnThreshold)
+		{
+			float heading = atan2f(velXZ.x, velXZ.y); // angle relative to +Z
+			float headingDeg = glm::degrees(heading);
+			// Smoothly interpolate rotation yaw using shortest angular distance to avoid 360-degree flips
+			const float RotLerp = 0.18f;
+			float currentYaw = State.Player->Rotation.y;
+			float diff = headingDeg - currentYaw;
+			while (diff < -180.0f)
+				diff += 360.0f;
+			while (diff > 180.0f)
+				diff -= 360.0f;
+			State.Player->Rotation.y = currentYaw + diff * RotLerp;
+		}
+	}
 
 	// Make camera to follow player
 	{
-		// State.CameraPosition = State.Player->Position + glm::vec3(0.0f, 1.5f, -2.5f);
-		State.CameraPosition = State.Player->Position + glm::vec3(-0.25f, 1.5f, -2.5f);
-		auto LookAtPosition = (State.Player->Position + glm::vec3(-0.25f, 1.25f, 0.0));
+		// Right-stick camera rotation + smooth follow
+		const float CamLerp = 0.12f;	   // smoothing factor, tweakable
+		const float CamYawSpeed = 90.0f;   // degrees per second for full stick deflection
+		const float CamPitchSpeed = 60.0f; // degrees per second
+
+		// Update camera yaw/pitch from right thumbstick
+		State.CameraYaw += Gamepad.GamepadThumbstickRight.X * CamYawSpeed * DeltaTime;
+		State.CameraPitch += -Gamepad.GamepadThumbstickRight.Y * CamPitchSpeed * DeltaTime; // invert Y
+		// clamp pitch
+		if (State.CameraPitch < -10.0f)
+			State.CameraPitch = -10.0f;
+		if (State.CameraPitch > 60.0f)
+			State.CameraPitch = 60.0f;
+
+		// base distance and height
+		const float CamDistance = 2.5f;
+		const float CamHeight = 1.5f;
+
+		float yawRad = glm::radians(State.CameraYaw);
+		float pitchRad = glm::radians(State.CameraPitch);
+
+		// spherical offset (left-handed, negative Z for behind)
+		glm::vec3 offset = glm::vec3(-sinf(yawRad) * cosf(pitchRad), sinf(pitchRad), -cosf(yawRad) * cosf(pitchRad)) * CamDistance;
+		offset.y = offset.y * CamDistance; // adjust vertical component by distance
+		// add camera height
+		offset.y += CamHeight;
+
+		auto DesiredCam = State.Player->Position + offset + glm::vec3(-0.25f, 0.0f, 0.0f);
+		// Snap camera instantly to desired position (no momentum) to avoid interpolation jitter
+		State.CameraPosition = DesiredCam;
+		auto LookAtPosition = State.Player->Position + glm::vec3(-0.25f, 1.25f, 0.0f);
 		State.View = glm::lookAtLH(State.CameraPosition * s_UnitsInMeter, LookAtPosition * s_UnitsInMeter, glm::vec3(0, 1, 0));
 	}
 
@@ -880,6 +910,7 @@ RE_API auto GameUpdateAndRender(FGameMemory& Memory, f32 DeltaTime, FOffscreenBu
 		for (auto& Mesh : State.Meshes)
 		{
 			auto Model = glm::translate(glm::mat4(1), Mesh.Position * s_UnitsInMeter)
+				* glm::rotate(glm::mat4(1), glm::radians(Mesh.Rotation.y), glm::vec3(0.0f, 1.0f, 0.0f))
 				* glm::rotate(glm::mat4(1), glm::radians(Mesh.Rotation.x), glm::vec3(1.0f, 0.0f, 0.0f));
 			State.MVP = State.Projection * State.View * Model;
 
