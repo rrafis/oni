@@ -55,7 +55,8 @@ namespace Engine::Mesh
 
 	struct alignas(16) FMeshUniform
 	{
-		glm::mat4 MVP;
+		glm::mat4 ViewProj;
+		glm::mat4 Model;
 	};
 
 	struct FMeshRenderer
@@ -81,6 +82,18 @@ namespace Engine::Mesh
 		NS::SharedPtr<MTL::Buffer> MaterialIndexBuffer;
 		NS::SharedPtr<MTL::ResidencySet> ResidencySet;
 		NS::SharedPtr<MTL4::ArgumentTable> ArgTableVert;
+	};
+
+	struct FSkeletalMeshRenderer : public FMeshRenderer
+	{
+		NS::SharedPtr<MTL::Buffer> SkinBuffer;
+	};
+
+	struct FSkMeshRenderer
+	{
+		std::vector<FSkeletalMeshRenderer> MeshRender;
+		NS::SharedPtr<MTL::Buffer> PoseTransoformBuffer;
+		NS::SharedPtr<MTL::Buffer> BindTransoformBuffer;
 	};
 
 	struct alignas(16) FRenderMaterial
@@ -146,14 +159,29 @@ namespace Engine::Mesh
 			std::string Name;
 		};
 
+		struct FSkeletalMeshData : FMeshData
+		{
+			FVertexStream SkinVertexStream;
+		};
+    
+        struct FSkMeshData
+        {
+            std::vector<FSkeletalMeshData> Meshes;
+            std::vector<glm::mat4> RestTransforms;
+            std::vector<glm::mat4> BindTransforms;
+            std::vector<std::string> JointNames;
+        };
+
 		auto ExportSphere(MTL::Device* Device, f32 Radius, u32 Segmentes) -> FMeshData;
 		auto ExportBox(MTL::Device* Device, glm::vec3 Extent, glm::uvec3 Segmentes) -> FMeshData;
 		auto ExportCapsule(MTL::Device* Device, glm::vec3 Extent, glm::uvec3 Segmentes) -> FMeshData;
 		auto ExportMeshFromPath(MTL::Device* Device, const char* Path) -> FMeshData;
+		auto ExportSkeletalMeshFromPath(MTL::Device* Device, const char* Path) -> FSkMeshData;
 	} // namespace MDLIO
 
 	namespace Metal
 	{
 		auto ProcessMeshData(MTL::Device* Device, const struct MDLIO::FMeshData& MeshData, u32 MaterialIndexOffset = 0) -> FMeshRenderer;
+		auto ProcessSkeletalMeshData(MTL::Device* Device, const MDLIO::FSkMeshData& MeshData, u32 MaterialIndexOffset) -> FSkMeshRenderer;
 	} // namespace Metal
 } // namespace Engine::Mesh

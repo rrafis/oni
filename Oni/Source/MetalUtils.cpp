@@ -96,19 +96,19 @@ namespace Engine::Mesh
 			}
 
 			NS::SharedPtr<MTL4::ArgumentTableDescriptor> ArgTableVertDesc = NS::TransferPtr(MTL4::ArgumentTableDescriptor::alloc()->init());
-			ArgTableVertDesc->setMaxBufferBindCount(11);
+			ArgTableVertDesc->setMaxBufferBindCount(5);
 			ArgTableVertDesc->setMaxTextureBindCount(0);
 			ArgTableVertDesc->setMaxSamplerStateBindCount(0);
 			MeshRender.ArgTableVert = NS::TransferPtr(Device->newArgumentTable(ArgTableVertDesc.get(), &error));
 
 			MeshRender.ArgTableVert->setAddress(MeshRender.VertexBuffer->gpuAddress(), 0);
-			MeshRender.ArgTableVert->setAddress(MeshRender.UniformBuffer->gpuAddress(), 10);
+			MeshRender.ArgTableVert->setAddress(MeshRender.UniformBuffer->gpuAddress(), 1);
 			MeshRender.ResidencySet->addAllocation(MeshRender.VertexBuffer.get());
 			MeshRender.ResidencySet->addAllocation(MeshRender.UniformBuffer.get());
 			MeshRender.ResidencySet->addAllocation(MeshRender.MaterialIndexBuffer.get());
 
 			NS::SharedPtr<MTL4::ArgumentTableDescriptor> ArgTableFragDesc = NS::TransferPtr(MTL4::ArgumentTableDescriptor::alloc()->init());
-			ArgTableFragDesc->setMaxBufferBindCount(14);
+			ArgTableFragDesc->setMaxBufferBindCount(2);
 			ArgTableFragDesc->setMaxTextureBindCount(0);
 			ArgTableFragDesc->setMaxSamplerStateBindCount(1);
 
@@ -129,7 +129,7 @@ namespace Engine::Mesh
 				Sub.IbAddress = Sub.IndexBuffer->gpuAddress();
 
 				Sub.ArgTableFrag = NS::TransferPtr(Device->newArgumentTable(ArgTableFragDesc.get(), &error));
-				Sub.ArgTableFrag->setAddress(MeshRender.MaterialIndexBuffer->gpuAddress() + Idx * sizeof(u32), 13);
+				Sub.ArgTableFrag->setAddress(MeshRender.MaterialIndexBuffer->gpuAddress() + Idx * sizeof(u32), 1);
 				MeshRender.ResidencySet->addAllocation(Sub.IndexBuffer.get());
 
 				MeshRender.Submeshes.emplace_back(Sub);
@@ -139,6 +139,31 @@ namespace Engine::Mesh
 			MeshRender.ResidencySet->commit();
 
 			return MeshRender;
+		}
+
+		auto ProcessSkeletalMeshData(MTL::Device* Device, const MDLIO::FSkMeshData& MeshData, u32 MaterialIndexOffset) -> FSkMeshRenderer
+		{
+			FSkMeshRenderer Result;
+			Result.BindTransoformBuffer = NS::TransferPtr(
+				Device->newBuffer(MeshData.BindTransforms.data(), sizeof(glm::mat4) * MeshData.BindTransforms.size(), MTL::ResourceStorageModeShared));
+			Result.PoseTransoformBuffer = NS::TransferPtr(
+				Device->newBuffer(MeshData.RestTransforms.data(), sizeof(glm::mat4) * MeshData.RestTransforms.size(), MTL::ResourceStorageModeShared));
+			for (auto& Mesh : MeshData.Meshes)
+			{
+				FSkeletalMeshRenderer MeshRender(ProcessMeshData(Device, Mesh, MaterialIndexOffset));
+				MaterialIndexOffset += Mesh.Materials.size();
+				MeshRender.SkinBuffer =
+					NS::TransferPtr(Device->newBuffer(Mesh.SkinVertexStream.Data.data(), Mesh.SkinVertexStream.Data.size(), MTL::ResourceStorageModeShared));
+				MeshRender.ArgTableVert->setAddress(MeshRender.SkinBuffer->gpuAddress(), 2);
+				MeshRender.ArgTableVert->setAddress(Result.BindTransoformBuffer->gpuAddress(), 3);
+				MeshRender.ArgTableVert->setAddress(Result.PoseTransoformBuffer->gpuAddress(), 4);
+				MeshRender.ResidencySet->addAllocation(MeshRender.SkinBuffer.get());
+				MeshRender.ResidencySet->addAllocation(Result.BindTransoformBuffer.get());
+				MeshRender.ResidencySet->addAllocation(Result.PoseTransoformBuffer.get());
+				MeshRender.ResidencySet->commit();
+				Result.MeshRender.emplace_back(MeshRender);
+			}
+			return Result;
 		}
 	} // namespace Metal
 } // namespace Engine::Mesh

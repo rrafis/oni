@@ -137,6 +137,7 @@ namespace Engine::Mesh
 				}
 				if (p.type == MDLMaterialPropertyTypeTexture && p.textureSamplerValue.texture.name)
 				{
+                    // TODO: Load texture
 					return std::string([p.textureSamplerValue.texture.name UTF8String]); // or resolve to file path
 				}
 				return {};
@@ -208,13 +209,12 @@ namespace Engine::Mesh
 			out.VertexCount = (uint32_t)mtkMesh.vertexCount;
 
 			// 1) Vertex buffer
-			assert(mtkMesh.vertexBuffers.count == 1);
+			assert(mtkMesh.vertexBuffers.count >= 1);
 			MDLVertexDescriptor* vdesc = mtkMesh.vertexDescriptor;
-			for (NSUInteger i = 0; i < mtkMesh.vertexBuffers.count; ++i)
 			{
-				MTKMeshBuffer* mbuf = mtkMesh.vertexBuffers[i];
+				MTKMeshBuffer* mbuf = mtkMesh.vertexBuffers[0];
 				FVertexStream& vs = out.VertexStream;
-				vs.Stride = (uint32_t)[vdesc.layouts[i] stride];
+				vs.Stride = (uint32_t)[vdesc.layouts[0] stride];
 				id<MTLBuffer> mtlBuf = [(id<MTLBuffer>)mbuf.buffer retain];
 				size_t len = mbuf.length;
 				vs.Data.resize(len);
@@ -265,7 +265,33 @@ namespace Engine::Mesh
 			return out;
 		}
 
-		auto GetVertexDescriptor() -> MDLVertexDescriptor*
+		// Export a single MTKMesh/MDLMesh pair to FMeshData
+		static FSkeletalMeshData ExportSkeletalMesh(id<MTLDevice> device, MDLMesh* mdlMesh, MDLSkeleton* skeleton)
+		{
+			FSkeletalMeshData out(ExportMesh(device, mdlMesh));
+
+			MTKMesh* mtkMesh = [[MTKMesh alloc] initWithMesh:mdlMesh device:device error:nil];
+			
+			// 1) Vertex skin buffer
+			assert(mtkMesh.vertexBuffers.count == 2);
+			MDLVertexDescriptor* vdesc = mtkMesh.vertexDescriptor;
+			{
+				MTKMeshBuffer* mbuf = mtkMesh.vertexBuffers[1];
+				FVertexStream& vs = out.SkinVertexStream;
+				vs.Stride = (uint32_t)[vdesc.layouts[1] stride];
+				id<MTLBuffer> mtlBuf = [(id<MTLBuffer>)mbuf.buffer retain];
+				size_t len = mbuf.length;
+				vs.Data.resize(len);
+				std::memcpy(vs.Data.data(), ((uint8_t*)[mtlBuf contents]) + mbuf.offset, len);
+				[mtlBuf release];
+			}
+
+			[mtkMesh release];
+
+			return out;
+		}
+
+		auto GetStaticMeshVertexDescriptor() -> MDLVertexDescriptor*
 		{
 			auto vertexDescriptor = [[MDLVertexDescriptor alloc] init];
 			// Position
@@ -294,16 +320,34 @@ namespace Engine::Mesh
 			return vertexDescriptor;
 		}
 
+		auto GetSkeletalMeshVertexDescriptor() -> MDLVertexDescriptor*
+		{
+			auto vertexDescriptor = GetStaticMeshVertexDescriptor();
+			// Joints
+			vertexDescriptor.attributes[4] = [[MDLVertexAttribute alloc] initWithName:MDLVertexAttributeJointIndices
+																				format:MDLVertexFormatUInt4
+																				offset:0
+																		bufferIndex:1];
+			// Weights
+			vertexDescriptor.attributes[5] = [[MDLVertexAttribute alloc] initWithName:MDLVertexAttributeJointWeights
+																				format:MDLVertexFormatFloat4
+																				offset:16
+																		bufferIndex:1];
+			vertexDescriptor.layouts[1] = [[MDLVertexBufferLayout alloc] initWithStride:32];
+			[vertexDescriptor setPackedOffsets];
+			return vertexDescriptor;
+		}
+
 		auto ExportSphere(MTL::Device* Device, f32 Radius, u32 Segmentes) -> FMeshData
 		{
 			@autoreleasepool
 			{
 				auto allocator = [[MTKMeshBufferAllocator alloc] initWithDevice:(id<MTLDevice>)Device];
 				MDLMesh* mdlMesh = [[MDLMesh alloc] initSphereWithExtent:{Radius*2.0f, Radius*2.0f, Radius*2.0f}
-														        segments:{Segmentes,Segmentes}
+																segments:{Segmentes,Segmentes}
 														   inwardNormals:NO
-														    geometryType:MDLGeometryTypeTriangles
-														       allocator:allocator];
+															geometryType:MDLGeometryTypeTriangles
+															   allocator:allocator];
 
 				// Generate tangents for PBR normal mapping
 				[mdlMesh addNormalsWithAttributeNamed:MDLVertexAttributeNormal
@@ -311,7 +355,7 @@ namespace Engine::Mesh
 				[mdlMesh addTangentBasisForTextureCoordinateAttributeNamed:MDLVertexAttributeTextureCoordinate
 														normalAttributeNamed:MDLVertexAttributeNormal
 														tangentAttributeNamed:MDLVertexAttributeTangent];
-				mdlMesh.vertexDescriptor = GetVertexDescriptor();
+				mdlMesh.vertexDescriptor = GetStaticMeshVertexDescriptor();
 
 				NSError* err = nil;
 				// Assign a simple material
@@ -338,10 +382,10 @@ namespace Engine::Mesh
 			{
 				auto allocator = [[MTKMeshBufferAllocator alloc] initWithDevice:(id<MTLDevice>)Device];
 				MDLMesh* mdlMesh = [[MDLMesh alloc] initBoxWithExtent:{Extent.x, Extent.y, Extent.z} 
-														     segments:{Segmentes.x, Segmentes.y, Segmentes.z}
+															 segments:{Segmentes.x, Segmentes.y, Segmentes.z}
 														inwardNormals:NO
 														 geometryType:MDLGeometryTypeTriangles
-														    allocator:allocator];
+															allocator:allocator];
 
 				// Generate tangents for PBR normal mapping
 				[mdlMesh addNormalsWithAttributeNamed:MDLVertexAttributeNormal
@@ -349,7 +393,7 @@ namespace Engine::Mesh
 				[mdlMesh addTangentBasisForTextureCoordinateAttributeNamed:MDLVertexAttributeTextureCoordinate
 														normalAttributeNamed:MDLVertexAttributeNormal
 														tangentAttributeNamed:MDLVertexAttributeTangent];
-				mdlMesh.vertexDescriptor = GetVertexDescriptor();
+				mdlMesh.vertexDescriptor = GetStaticMeshVertexDescriptor();
 
 				NSError* err = nil;
 				// Assign a simple material
@@ -380,7 +424,7 @@ namespace Engine::Mesh
 													   hemisphereSegments:Segmentes.z
 															inwardNormals:NO
 															 geometryType:MDLGeometryTypeTriangles
-															    allocator:allocator];
+																allocator:allocator];
 
 				// Generate tangents for PBR normal mapping
 				[mdlMesh addNormalsWithAttributeNamed:MDLVertexAttributeNormal
@@ -388,7 +432,7 @@ namespace Engine::Mesh
 				[mdlMesh addTangentBasisForTextureCoordinateAttributeNamed:MDLVertexAttributeTextureCoordinate
 														normalAttributeNamed:MDLVertexAttributeNormal
 														tangentAttributeNamed:MDLVertexAttributeTangent];
-				mdlMesh.vertexDescriptor = GetVertexDescriptor();
+				mdlMesh.vertexDescriptor = GetStaticMeshVertexDescriptor();
 
 				NSError* err = nil;
 				// Assign a simple material
@@ -418,7 +462,7 @@ namespace Engine::Mesh
 				NSString* nsPath = [NSString stringWithUTF8String:Path];
 				NSURL* url = [NSURL fileURLWithPath:nsPath];
 
-				auto vertexDescriptor = GetVertexDescriptor();
+				auto vertexDescriptor = GetStaticMeshVertexDescriptor();
 				// Load the asset
 				MDLAsset* asset = [[MDLAsset alloc] initWithURL:url vertexDescriptor:vertexDescriptor bufferAllocator:allocator];
 				MDLMesh* mdlMesh = (MDLMesh*)[asset objectAtIndex:0];
@@ -434,6 +478,94 @@ namespace Engine::Mesh
 				auto Mesh = ExportMesh((id<MTLDevice>)Device, mdlMesh);
 
 				return Mesh;
+			}
+		}
+
+		void CollectMeshesAndSkeletonFromObject(MDLObject* object, NSMutableArray<MDLMesh*>* meshes, MDLSkeleton * __autoreleasing * skeleton)
+		{
+			// If this object is a mesh, add it
+			if ([object isKindOfClass:[MDLMesh class]]) {
+				[meshes addObject:(MDLMesh *)object];
+			}
+
+			// If this object is a skeleton, capture it
+			if ([object isKindOfClass:[MDLSkeleton class]]) {
+				*skeleton = (MDLSkeleton *)object;
+			}
+
+			// Recurse into children
+			for (MDLObject *child in object.children) {
+				CollectMeshesAndSkeletonFromObject(child, meshes, skeleton);
+			}
+		}
+
+		auto ExportSkeletalMeshFromPath(MTL::Device* Device, const char* Path) -> FSkMeshData
+		{
+			@autoreleasepool
+			{
+				auto allocator = [[MTKMeshBufferAllocator alloc] initWithDevice:(id<MTLDevice>)Device];
+
+				NSString* nsPath = [NSString stringWithUTF8String:Path];
+				NSURL* url = [NSURL fileURLWithPath:nsPath];
+
+				auto vertexDescriptor = GetSkeletalMeshVertexDescriptor();
+				// Load the asset
+				MDLAsset* asset = [[MDLAsset alloc] initWithURL:url vertexDescriptor:vertexDescriptor bufferAllocator:allocator];
+                [asset loadTextures];
+
+				NSMutableArray<MDLMesh *> *meshes = [NSMutableArray array];
+				MDLSkeleton *skeleton = nil;
+
+				for (MDLObject *object in asset) {
+					CollectMeshesAndSkeletonFromObject(object, meshes, &skeleton);
+				}
+				
+				FSkMeshData Result{};
+
+				for (u32 idx = 0; idx < meshes.count; idx++)
+				{
+					MDLMesh* mdlMesh = meshes[idx];
+					// Generate tangents for PBR normal mapping
+					[mdlMesh addNormalsWithAttributeNamed:MDLVertexAttributeNormal
+											creaseThreshold:0.0];
+					[mdlMesh addTangentBasisForTextureCoordinateAttributeNamed:MDLVertexAttributeTextureCoordinate
+															normalAttributeNamed:MDLVertexAttributeNormal
+															tangentAttributeNamed:MDLVertexAttributeTangent];
+					mdlMesh.vertexDescriptor = vertexDescriptor;
+
+					Result.Meshes.emplace_back(ExportSkeletalMesh((id<MTLDevice>)Device, mdlMesh, skeleton));
+				}
+
+				
+				Result.RestTransforms.reserve([skeleton.jointPaths count]); // Pre-allocate memory for efficiency
+				Result.BindTransforms.reserve([skeleton.jointPaths count]); // Pre-allocate memory for efficiency
+				Result.JointNames.reserve([skeleton.jointPaths count]); // Pre-allocate memory for efficiency
+                std::vector<matrix_float4x4> bindTransforms([skeleton.jointPaths count]);
+                std::vector<matrix_float4x4> restTransforms([skeleton.jointPaths count]);
+                bindTransforms.resize([skeleton.jointPaths count]);
+                restTransforms.resize([skeleton.jointPaths count]);
+                
+                [skeleton.jointBindTransforms getFloat4x4Array:bindTransforms.data() maxCount:bindTransforms.size()];
+                [skeleton.jointRestTransforms getFloat4x4Array:restTransforms.data() maxCount:restTransforms.size()];
+
+				for (NSUInteger i = 0; i < [skeleton.jointBindTransforms elementCount]; ++i)
+				{
+					auto& bind = Result.BindTransforms.emplace_back();
+                    auto& rest = Result.RestTransforms.emplace_back();
+					for (int col = 0; col < 4; ++col)
+						for (int row = 0; row < 4; ++row)
+						{
+                            bind[col][row] = bindTransforms[i].columns[col][row];
+                            rest[col][row] = restTransforms[i].columns[col][row];
+						}
+				}
+
+                // Import joint names
+                for (NSString *str in skeleton.jointPaths)
+                    if (str != nil)
+                        Result.JointNames.emplace_back([str UTF8String]);
+
+				return Result;
 			}
 		}
 	}

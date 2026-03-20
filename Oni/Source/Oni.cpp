@@ -239,6 +239,16 @@ struct FMesh
 	f32 PlayerFrictionCoeficient;
 };
 
+struct FSkeletalMesh
+{
+	Engine::Mesh::FSkMeshRenderer Render;
+	glm::vec3 Position;
+	glm::vec3 Rotation;
+	glm::vec3 Velocity;
+	f32 PlayerAccelerationRate;
+	f32 PlayerFrictionCoeficient;
+};
+
 struct FGameState
 {
 	MTL::Device* Device;
@@ -250,6 +260,7 @@ struct FGameState
 	NS::SharedPtr<MTL4::Compiler> ShaderCompiler;
 	NS::SharedPtr<MTL4::CompilerTaskOptions> ShaderCompOptions;
 	NS::SharedPtr<MTL::RenderPipelineState> Pipeline;
+	NS::SharedPtr<MTL::RenderPipelineState> SkPipeline;
 
 	MTL::PixelFormat DepthFormat;
 	MTL::Texture* DepthTexture;
@@ -271,13 +282,13 @@ struct FGameState
 	FMesh* Player;
 	FMesh* Capsule;
 	std::vector<FMesh> Meshes;
+	FSkeletalMesh SkMesh;
 
 	glm::vec3 CameraPosition;
 
 	glm::mat4 View;
 	glm::mat4 Projection;
 
-	glm::mat4 MVP;
 	f32 FOV;
 	u32 Width;
 	u32 Height;
@@ -442,6 +453,48 @@ auto LoadMesh(FGameState& State, MTL::Device* Device, const char* RootPath, cons
 	return Result;
 }
 
+auto LoadSkeletalMesh(FGameState& State, MTL::Device* Device, const char* RootPath, const char* Name) -> Engine::Mesh::FSkMeshRenderer
+{
+	auto LoadPath = std::filesystem::path() / ContentPath / RootPath / Name;
+	auto MeshData = Engine::Mesh::MDLIO::ExportSkeletalMeshFromPath(Device, LoadPath.c_str());
+
+	// HACK: Make stornger references for material index
+	auto MaterailIndexOffset = State.Materials.size();
+	Engine::Mesh::FSkMeshRenderer Result = Engine::Mesh::Metal::ProcessSkeletalMeshData(Device, MeshData, MaterailIndexOffset);
+	for (auto& Mesh : MeshData.Meshes)
+	{
+		for (auto& Material : Mesh.Materials)
+		{
+			Engine::Mesh::FRenderMaterial RenderMat;
+			RenderMat.BaseColorFactor = Material.BaseColorFactor;
+			RenderMat.EmissiveFactor = Material.EmissiveFactor;
+			RenderMat.MetallicFactor = Material.MetallicFactor;
+			RenderMat.RoughnessFactor = Material.RoughnessFactor;
+
+			if (Material.BaseColorTex.size() > 0)
+				RenderMat.BaseColorTex = LoadTexture(State, RootPath, Material.BaseColorTex.data());
+			else
+				RenderMat.BaseColorTex = State.DummyTexture;
+
+			if (Material.MetallicRoughnessTex.size() > 0)
+				RenderMat.MetallicRoughnessTex = LoadTexture(State, RootPath, Material.MetallicRoughnessTex.data());
+
+			if (Material.NormalTex.size() > 0)
+				RenderMat.NormalTex = LoadTexture(State, RootPath, Material.NormalTex.data());
+
+			if (Material.EmissiveTex.size() > 0)
+				RenderMat.EmissiveTex = LoadTexture(State, RootPath, Material.EmissiveTex.data());
+
+			if (Material.OcclusionTex.size() > 0)
+				RenderMat.OcclusionTex = LoadTexture(State, RootPath, Material.OcclusionTex.data());
+
+			State.Materials.emplace_back(RenderMat);
+		}
+	}
+
+	return Result;
+}
+
 auto LoadBox(FGameState& State, MTL::Device* Device, glm::vec3 Extent, glm::uvec3 Segments) -> Engine::Mesh::FMeshRenderer
 {
 	auto Mesh = Engine::Mesh::MDLIO::ExportBox(Device, Extent, Segments);
@@ -576,6 +629,10 @@ RE_API auto GameInitialize(FGameMemory& Memory) -> void
 	State.Meshes[3].Position = glm::vec3(0.0f, 0.875f, 0.0f);
 	State.Meshes[3].Render = LoadCapsule(State, State.Device, glm::vec3(0.25f, 1.75f, 0.25f) * s_UnitsInMeter, glm::uvec3(12, 4, 6));
 
+	State.SkMesh.Position = glm::vec3(0.0f, 0.0f, 0.0f);
+	State.SkMesh.Rotation.y = -180.f;
+	State.SkMesh.Render = LoadSkeletalMesh(State, State.Device, "meshes", "mannequiny-0.3.0.usdz");
+
 	State.Player = &State.Meshes[0];
 	State.Capsule = &State.Meshes[3];
 	State.Player->PlayerAccelerationRate = 20.0f;
@@ -638,6 +695,10 @@ RE_API auto GameInitialize(FGameMemory& Memory) -> void
 		vertFuncDesc->setLibrary(Shader);
 		vertFuncDesc->setName(NS::String::alloc()->init("vertex_main", NS::StringEncoding::UTF8StringEncoding));
 
+		MTL4::LibraryFunctionDescriptor* vertSkFuncDesc = MTL4::LibraryFunctionDescriptor::alloc()->init();
+		vertSkFuncDesc->setLibrary(Shader);
+		vertSkFuncDesc->setName(NS::String::alloc()->init("vertex_sk_main", NS::StringEncoding::UTF8StringEncoding));
+
 		MTL4::LibraryFunctionDescriptor* fragFuncDesc = MTL4::LibraryFunctionDescriptor::alloc()->init();
 		fragFuncDesc->setLibrary(Shader);
 		fragFuncDesc->setName(NS::String::alloc()->init("fragment_main", NS::StringEncoding::UTF8StringEncoding));
@@ -649,6 +710,17 @@ RE_API auto GameInitialize(FGameMemory& Memory) -> void
 
 		State.Pipeline = NS::RetainPtr(State.ShaderCompiler->newRenderPipelineState(pipeDesc, State.ShaderCompOptions.get(), &error));
 		if (!State.Pipeline)
+		{
+			NS::String* desc = error->localizedDescription();
+			printf("Shader compile error: %s\n", desc->utf8String());
+		}
+
+		MTL4::RenderPipelineDescriptor* skPipeDesc = MTL4::RenderPipelineDescriptor::alloc()->init();
+		skPipeDesc->setVertexFunctionDescriptor(vertSkFuncDesc);
+		skPipeDesc->setFragmentFunctionDescriptor(fragFuncDesc);
+		skPipeDesc->colorAttachments()->object(0)->setPixelFormat(MTL::PixelFormatRGBA16Float);
+		State.SkPipeline = NS::RetainPtr(State.ShaderCompiler->newRenderPipelineState(skPipeDesc, State.ShaderCompOptions.get(), &error));
+		if (!State.SkPipeline)
 		{
 			NS::String* desc = error->localizedDescription();
 			printf("Shader compile error: %s\n", desc->utf8String());
@@ -924,10 +996,10 @@ RE_API auto GameUpdateAndRender(FGameMemory& Memory, f32 DeltaTime, FOffscreenBu
 			auto Model = glm::translate(glm::mat4(1), Mesh.Position * s_UnitsInMeter)
 				* glm::rotate(glm::mat4(1), glm::radians(Mesh.Rotation.y), glm::vec3(0.0f, 1.0f, 0.0f))
 				* glm::rotate(glm::mat4(1), glm::radians(Mesh.Rotation.x), glm::vec3(1.0f, 0.0f, 0.0f));
-			State.MVP = State.Projection * State.View * Model;
 
 			auto MeshUniform = static_cast<Engine::Mesh::FMeshUniform*>(Mesh.Render.UniformBuffer->contents());
-			MeshUniform->MVP = State.MVP;
+			MeshUniform->ViewProj = State.Projection * State.View;
+			MeshUniform->Model = Model;
 
 			Cmd->useResidencySet(Mesh.Render.ResidencySet.get());
 			Encoder->setArgumentTable(Mesh.Render.ArgTableVert.get(), MTL::RenderStageVertex);
@@ -935,7 +1007,7 @@ RE_API auto GameUpdateAndRender(FGameMemory& Memory, f32 DeltaTime, FOffscreenBu
 			for (auto& Sub : Mesh.Render.Submeshes)
 			{
 				Sub.ArgTableFrag->setSamplerState(State.Sampler->gpuResourceID(), 0);
-				Sub.ArgTableFrag->setAddress(State.MaterialBuffer->gpuAddress(), 11);
+				Sub.ArgTableFrag->setAddress(State.MaterialBuffer->gpuAddress(), 0);
 				Encoder->setArgumentTable(Sub.ArgTableFrag.get(), MTL::RenderStageFragment);
 
 				Encoder->setTriangleFillMode(Sub.bWireframe ? MTL::TriangleFillModeLines : MTL::TriangleFillModeFill);
@@ -944,6 +1016,35 @@ RE_API auto GameUpdateAndRender(FGameMemory& Memory, f32 DeltaTime, FOffscreenBu
 				Encoder->drawIndexedPrimitives(MTL::PrimitiveTypeTriangle, Sub.IndexCount, Sub.IndexType, Sub.IbAddress, Sub.IbSize, 1);
 			}
 		}
+
+		Encoder->setRenderPipelineState(State.SkPipeline.get());
+		{
+			auto Model = glm::translate(glm::mat4(1), State.SkMesh.Position * s_UnitsInMeter)
+				* glm::rotate(glm::mat4(1), glm::radians(State.SkMesh.Rotation.y), glm::vec3(0.0f, 1.0f, 0.0f))
+				* glm::rotate(glm::mat4(1), glm::radians(State.SkMesh.Rotation.x), glm::vec3(1.0f, 0.0f, 0.0f));
+
+			for (auto& Mesh : State.SkMesh.Render.MeshRender)
+			{
+				auto MeshUniform = static_cast<Engine::Mesh::FMeshUniform*>(Mesh.UniformBuffer->contents());
+				MeshUniform->ViewProj = State.Projection * State.View;
+				MeshUniform->Model = Model;
+
+				Cmd->useResidencySet(Mesh.ResidencySet.get());
+				Encoder->setArgumentTable(Mesh.ArgTableVert.get(), MTL::RenderStageVertex);
+				for (auto& Sub : Mesh.Submeshes)
+				{
+					Sub.ArgTableFrag->setSamplerState(State.Sampler->gpuResourceID(), 0);
+					Sub.ArgTableFrag->setAddress(State.MaterialBuffer->gpuAddress(), 0);
+					Encoder->setArgumentTable(Sub.ArgTableFrag.get(), MTL::RenderStageFragment);
+
+					Encoder->setTriangleFillMode(Sub.bWireframe ? MTL::TriangleFillModeLines : MTL::TriangleFillModeFill);
+					Encoder->setCullMode(Sub.bDoubleSided ? MTL::CullModeNone : MTL::CullModeBack);
+					Encoder->setFrontFacingWinding(Sub.bWindingOrderClockWise ? MTL::WindingClockwise : MTL::WindingCounterClockwise);
+					Encoder->drawIndexedPrimitives(MTL::PrimitiveTypeTriangle, Sub.IndexCount, Sub.IndexType, Sub.IbAddress, Sub.IbSize, 1);
+				}
+			}
+		}
+
 		Encoder->endEncoding();
 	}
 

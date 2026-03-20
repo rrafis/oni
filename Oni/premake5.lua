@@ -32,6 +32,7 @@ project "Oni"
 
 	files {
 		"Source/**.*",
+		"../Content/**.*"
 	}
 
 	links {
