@@ -173,6 +173,15 @@ namespace Engine::Mesh
 		auto ProcessSkeletalMeshData(MTL::Device* Device, const MDLIO::FSkMeshData& MeshData, u32 MaterialIndexOffset) -> FSkMeshRenderer;
 	} // namespace Metal
 
+	namespace mdl
+	{
+		auto LoadData(MTL::Device* Device, const char* Path) -> void*;
+		auto FreeData(void* Data) -> void;
+
+		auto LoadMesh(MTL::Device* Device, void* Data) -> std::vector<Mesh::FMeshData>;
+		auto LoadMaterial(MTL::Device* Device, void* Data) -> std::vector<Mesh::FMaterial>;
+	} // namespace mdl
+
 	namespace gltf
 	{
 		auto LoadData(const char* Path) -> cgltf_data*;

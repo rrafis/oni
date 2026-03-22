@@ -621,6 +621,7 @@ RE_API auto GameInitialize(FGameMemory& Memory) -> void
 		State.MaterialMap[mat.Name] = State.NewMaterials.size() - 1;
 	}
 
+	// Test load GLTF skeletal mesh
 	{
 		auto LoadPath = std::filesystem::path() / ContentPath / "meshes" / "Woman.gltf";
 		auto data = Engine::Mesh::gltf::LoadData(LoadPath.c_str());
@@ -649,6 +650,7 @@ RE_API auto GameInitialize(FGameMemory& Memory) -> void
 		}
 	}
 
+	// Test load GLTF static mesh
 	{
 		auto LoadPath = std::filesystem::path() / ContentPath / "meshes" / "DamagedHelmet.glb";
 		auto data = Engine::Mesh::gltf::LoadData(LoadPath.c_str());
@@ -677,11 +679,32 @@ RE_API auto GameInitialize(FGameMemory& Memory) -> void
 		}
 	}
 
+	// Test load ModelIO static mesh
+	{
+		auto LoadPath = std::filesystem::path() / ContentPath / "meshes" / "samanosuke_future" / "Future_Samanosuke.obj";
+		auto data = Engine::Mesh::mdl::LoadData(State.Device, LoadPath.c_str());
+		auto Meshes = Engine::Mesh::mdl::LoadMesh(State.Device, data);
+		auto Materials = Engine::Mesh::mdl::LoadMaterial(State.Device, data);
+		Engine::Mesh::mdl::FreeData(data);
+
+		for (auto& Mesh : Meshes)
+		{
+			State.NewMeshes.emplace_back(Mesh);
+		}
+
+		u32 Offset = State.MaterialMap.size();
+		for (u32 Idx = 0; Idx < Materials.size(); Idx++)
+		{
+			auto& mat = State.NewMaterials.emplace_back(Materials[Idx]);
+			State.MaterialMap[mat.Name] = Offset + Idx;
+		}
+	}
+
 	// Generate test meshes
 	{
-		State.NewMeshes.emplace_back(Engine::Mesh::GenerateBox("TestBox", glm::vec3(10.0f, 1.0f, 10.f) * s_UnitsInMeter, glm::uvec3(1, 1, 1)));
-		State.NewMeshes.emplace_back(Engine::Mesh::GenerateCapsule("TestCapsule", glm::vec3(0.25f, 1.75f, 0.25f) * s_UnitsInMeter, glm::uvec3(12, 4, 6)));
-		State.NewMeshes.emplace_back(Engine::Mesh::GenerateSphere("TestSphere", 1.0f * s_UnitsInMeter, 12));
+		State.NewMeshes.emplace_back(Engine::Mesh::GenerateBox("Test Box", glm::vec3(10.0f, 1.0f, 10.f) * s_UnitsInMeter, glm::uvec3(1, 1, 1)));
+		State.NewMeshes.emplace_back(Engine::Mesh::GenerateCapsule("Test Capsule", glm::vec3(0.25f, 1.75f, 0.25f) * s_UnitsInMeter, glm::uvec3(12, 4, 6)));
+		State.NewMeshes.emplace_back(Engine::Mesh::GenerateSphere("Test Sphere", 1.0f * s_UnitsInMeter, 12));
 	}
 
 	State.Meshes.emplace_back();

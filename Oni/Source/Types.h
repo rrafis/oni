@@ -143,7 +143,7 @@ namespace Engine
 
 		struct FMeshDataStream
 		{
-			u32 Count;
+			u64 Count;
 			u32 Stride;
 			std::vector<u8> Data; // raw index data
 		};

@@ -94,6 +94,19 @@ namespace Engine::Mesh
 		}
 	}
 
+	static u32 MapIndexStride(MTKSubmesh* sm)
+	{
+		switch (sm.indexType)
+		{
+			case MTLIndexTypeUInt16:
+				return sizeof(u16);
+			case MTLIndexTypeUInt32:
+				return sizeof(u32);
+			default:
+				return sizeof(u32);
+		}
+	}
+
 	namespace MDLIO
 	{
 		// Read a Model I/O material into PBR scaffolding
@@ -137,7 +150,7 @@ namespace Engine::Mesh
 				}
 				if (p.type == MDLMaterialPropertyTypeTexture && p.textureSamplerValue.texture.name)
 				{
-                    // TODO: Load texture
+					// TODO: Load texture
 					return std::string([p.textureSamplerValue.texture.name UTF8String]); // or resolve to file path
 				}
 				return {};
@@ -511,7 +524,7 @@ namespace Engine::Mesh
 				auto vertexDescriptor = GetSkeletalMeshVertexDescriptor();
 				// Load the asset
 				MDLAsset* asset = [[MDLAsset alloc] initWithURL:url vertexDescriptor:vertexDescriptor bufferAllocator:allocator];
-                [asset loadTextures];
+				[asset loadTextures];
 
 				NSMutableArray<MDLMesh *> *meshes = [NSMutableArray array];
 				MDLSkeleton *skeleton = nil;
@@ -540,33 +553,331 @@ namespace Engine::Mesh
 				Result.RestTransforms.reserve([skeleton.jointPaths count]); // Pre-allocate memory for efficiency
 				Result.BindTransforms.reserve([skeleton.jointPaths count]); // Pre-allocate memory for efficiency
 				Result.JointNames.reserve([skeleton.jointPaths count]); // Pre-allocate memory for efficiency
-                std::vector<matrix_float4x4> bindTransforms([skeleton.jointPaths count]);
-                std::vector<matrix_float4x4> restTransforms([skeleton.jointPaths count]);
-                bindTransforms.resize([skeleton.jointPaths count]);
-                restTransforms.resize([skeleton.jointPaths count]);
-                
-                [skeleton.jointBindTransforms getFloat4x4Array:bindTransforms.data() maxCount:bindTransforms.size()];
-                [skeleton.jointRestTransforms getFloat4x4Array:restTransforms.data() maxCount:restTransforms.size()];
+				std::vector<matrix_float4x4> bindTransforms([skeleton.jointPaths count]);
+				std::vector<matrix_float4x4> restTransforms([skeleton.jointPaths count]);
+				bindTransforms.resize([skeleton.jointPaths count]);
+				restTransforms.resize([skeleton.jointPaths count]);
+				
+				[skeleton.jointBindTransforms getFloat4x4Array:bindTransforms.data() maxCount:bindTransforms.size()];
+				[skeleton.jointRestTransforms getFloat4x4Array:restTransforms.data() maxCount:restTransforms.size()];
 
 				for (NSUInteger i = 0; i < [skeleton.jointBindTransforms elementCount]; ++i)
 				{
 					auto& bind = Result.BindTransforms.emplace_back();
-                    auto& rest = Result.RestTransforms.emplace_back();
+					auto& rest = Result.RestTransforms.emplace_back();
 					for (int col = 0; col < 4; ++col)
 						for (int row = 0; row < 4; ++row)
 						{
-                            bind[col][row] = bindTransforms[i].columns[col][row];
-                            rest[col][row] = restTransforms[i].columns[col][row];
+							bind[col][row] = bindTransforms[i].columns[col][row];
+							rest[col][row] = restTransforms[i].columns[col][row];
 						}
 				}
 
-                // Import joint names
-                for (NSString *str in skeleton.jointPaths)
-                    if (str != nil)
-                        Result.JointNames.emplace_back([str UTF8String]);
+				// Import joint names
+				for (NSString *str in skeleton.jointPaths)
+					if (str != nil)
+						Result.JointNames.emplace_back([str UTF8String]);
 
 				return Result;
 			}
 		}
 	}
+
+	namespace mdl
+	{
+		void UpdateMeshes(MDLObject* object, MDLVertexDescriptor* vertexDescriptor)
+		{
+			// If this object is a mesh, add it
+			if ([object isKindOfClass:[MDLMesh class]]) {
+				MDLMesh* mdlMesh = (MDLMesh *)object;
+				// Generate tangents for PBR normal mapping
+				[mdlMesh addNormalsWithAttributeNamed:MDLVertexAttributeNormal
+										creaseThreshold:0.0];
+				[mdlMesh addTangentBasisForTextureCoordinateAttributeNamed:MDLVertexAttributeTextureCoordinate
+														normalAttributeNamed:MDLVertexAttributeNormal
+														tangentAttributeNamed:MDLVertexAttributeTangent];
+				mdlMesh.vertexDescriptor = vertexDescriptor;
+			}
+
+			// Recurse into children
+			for (MDLObject *child in object.children) {
+				UpdateMeshes(child, vertexDescriptor);
+			}
+		}
+
+		void CollectMeshesFromObject(MDLObject* object, NSMutableArray<MDLMesh*>* meshes)
+		{
+			if ([object isKindOfClass:[MDLMesh class]]) {
+				[meshes addObject:(MDLMesh *)object];
+			}
+
+			for (MDLObject *child in object.children) {
+				CollectMeshesFromObject(child, meshes);
+			}
+		}
+
+		// Read a Model I/O material into PBR scaffolding
+		static auto ConvertMaterial(MDLMaterial* mdlMat) -> FMaterial
+		{
+			FMaterial mat{};
+			if (!mdlMat)
+				return mat;
+			mat.Name = mdlMat.name ? std::string([mdlMat.name UTF8String]) : std::string();
+
+			auto getTexPath = [&](MDLMaterialSemantic sem) -> std::string {
+				MDLMaterialProperty* p = [mdlMat propertyWithSemantic:sem];
+				if (!p)
+					return {};
+				if (p.type == MDLMaterialPropertyTypeString && p.stringValue)
+				{
+					return std::string([p.stringValue UTF8String]);
+				}
+				if (p.type == MDLMaterialPropertyTypeTexture && p.textureSamplerValue.texture.name)
+				{
+					// TODO: Load texture
+					return std::string([p.textureSamplerValue.texture.name UTF8String]); // or resolve to file path
+				}
+				return {};
+			};
+
+			// BaseColor, Metallic/Roughness, Normal, Emissive, Occlusion
+			{
+				MDLMaterialProperty* p = [mdlMat propertyWithSemantic:MDLMaterialSemanticBaseColor];
+				if (p)
+				{
+					if (p.type == MDLMaterialPropertyTypeFloat4)
+					{
+						vector_float4 v = p.float4Value;
+						mat.BaseColorFactor[0] = v.x;
+						mat.BaseColorFactor[1] = v.y;
+						mat.BaseColorFactor[2] = v.z;
+						mat.BaseColorFactor[3] = v.w;
+					}
+					else if (p.type == MDLMaterialPropertyTypeFloat3)
+					{
+						vector_float3 v = p.float3Value;
+						mat.BaseColorFactor[0] = v.x;
+						mat.BaseColorFactor[1] = v.y;
+						mat.BaseColorFactor[2] = v.z;
+					}
+					mat.BaseColorTex = getTexPath(MDLMaterialSemanticBaseColor);
+				}
+			}
+			{
+				MDLMaterialProperty* m = [mdlMat propertyWithSemantic:MDLMaterialSemanticMetallic];
+				if (m && m.type == MDLMaterialPropertyTypeFloat)
+					mat.MetallicFactor = m.floatValue;
+				MDLMaterialProperty* r = [mdlMat propertyWithSemantic:MDLMaterialSemanticRoughness];
+				if (r && r.type == MDLMaterialPropertyTypeFloat)
+					mat.RoughnessFactor = r.floatValue;
+				// Single ORM texture if present
+				std::string orm = getTexPath(MDLMaterialSemanticMetallic);
+				if (orm.empty())
+					orm = getTexPath(MDLMaterialSemanticRoughness);
+				mat.MetallicRoughnessTex = orm;
+			}
+			{
+				MDLMaterialProperty* e = [mdlMat propertyWithSemantic:MDLMaterialSemanticEmission];
+				if (e && e.type == MDLMaterialPropertyTypeFloat3)
+				{
+					vector_float3 v = e.float3Value;
+					mat.EmissiveFactor[0] = v.x;
+					mat.EmissiveFactor[1] = v.y;
+					mat.EmissiveFactor[2] = v.z;
+				}
+				mat.EmissiveTex = getTexPath(MDLMaterialSemanticEmission);
+			}
+			mat.NormalTex = getTexPath(MDLMaterialSemanticTangentSpaceNormal);
+			mat.OcclusionTex = getTexPath(MDLMaterialSemanticAmbientOcclusion);
+			MDLMaterialProperty* ds = [mdlMat propertyWithSemantic:MDLMaterialSemanticOpacity];
+			mat.DoubleSided = ds ? ds.floatValue < 1.0f : false;
+
+			return mat;
+		}
+
+		auto GetStaticMeshVertexDescriptor() -> MDLVertexDescriptor*
+		{
+			auto vertexDescriptor = [[MDLVertexDescriptor alloc] init];
+			// Position
+			vertexDescriptor.attributes[0] = [[MDLVertexAttribute alloc] initWithName:MDLVertexAttributePosition
+																				format:MDLVertexFormatFloat3
+																				offset:0
+																		bufferIndex:0];
+			// Normal
+			vertexDescriptor.attributes[1] = [[MDLVertexAttribute alloc] initWithName:MDLVertexAttributeNormal
+																				format:MDLVertexFormatFloat3
+																				offset:12
+																		bufferIndex:0];
+			// Tangent
+			vertexDescriptor.attributes[2] = [[MDLVertexAttribute alloc] initWithName:MDLVertexAttributeTangent
+																				format:MDLVertexFormatFloat3
+																				offset:24
+																		bufferIndex:0];
+			// UV
+			vertexDescriptor.attributes[3] = [[MDLVertexAttribute alloc] initWithName:MDLVertexAttributeTextureCoordinate
+																				format:MDLVertexFormatFloat2
+																				offset:36
+																		bufferIndex:0];
+			// Stride = size of your vertex struct (e.g., 44 bytes)
+			vertexDescriptor.layouts[0] = [[MDLVertexBufferLayout alloc] initWithStride:44];
+			[vertexDescriptor setPackedOffsets];
+			return vertexDescriptor;
+		}
+
+		static auto LoadMeshInternal(id<MTLDevice> device, MDLMesh* mdlMesh, std::unordered_map<MDLMaterial*, uint32_t>& matIndex) -> Mesh::FMeshData
+		{
+			MTKMesh* mtkMesh = [[MTKMesh alloc] initWithMesh:mdlMesh device:device error:nil];
+
+			Mesh::FMeshData out{};
+			out.Name = mdlMesh.name ? std::string([mdlMesh.name UTF8String]) : std::string();
+			out.bHasSkeleton = false;
+
+			// 1) Vertex buffer
+			assert(mtkMesh.vertexBuffers.count >= 1);
+			MDLVertexDescriptor* vdesc = mtkMesh.vertexDescriptor;
+			{
+				MTKMeshBuffer* mbuf = mtkMesh.vertexBuffers[0];
+				auto& vs = out.VertexStream;
+				vs.Stride = (uint32_t)[vdesc.layouts[0] stride];
+				vs.Count = mtkMesh.vertexCount;
+				id<MTLBuffer> mtlBuf = [(id<MTLBuffer>)mbuf.buffer retain];
+				size_t len = mbuf.length;
+				vs.Data.resize(len);
+				std::memcpy(vs.Data.data(), ((uint8_t*)[mtlBuf contents]) + mbuf.offset, len);
+				[mtlBuf release];
+			}
+
+			// 2) Materials: build table and reference indices
+			// Build a material map to dedupe
+			for (MDLSubmesh* sm in mdlMesh.submeshes)
+			{
+				MDLMaterial* mdlMat = sm.material;
+				if (mdlMat && matIndex.find(mdlMat) == matIndex.end())
+				{
+					uint32_t idx = (uint32_t)out.Materials.size();
+					out.Materials.emplace_back([mdlMat.name UTF8String]);
+					// Materials.push_back(ConvertMaterial(mdlMat));
+					matIndex[mdlMat] = idx;
+				}
+			}
+
+			// 3) Submeshes and indices
+			for (NSUInteger i = 0; i < mtkMesh.submeshes.count; ++i)
+			{
+				MTKSubmesh* msm = mtkMesh.submeshes[i];
+				MDLSubmesh* dsm = mdlMesh.submeshes[i];
+				FSubmeshData& S = out.Submeshes.emplace_back();
+				S.IndexStream.Count = msm.indexCount;
+				S.IndexStream.Stride = MapIndexStride(msm);
+				S.PrimitiveType = MapMTLPrimitiveToEngine(msm.primitiveType);
+				S.MaterialIndex = 0;
+				if (dsm.material && matIndex.find(dsm.material) != matIndex.end())
+				{
+					S.MaterialIndex = matIndex[dsm.material];
+				}
+
+				// Copy index data
+				id<MTLBuffer> idxBuf = (id<MTLBuffer>)msm.indexBuffer.buffer;
+				size_t len = msm.indexBuffer.length;
+				S.IndexStream.Data.resize(len);
+				std::memcpy(S.IndexStream.Data.data(), ((uint8_t*)[idxBuf contents]) + msm.indexBuffer.offset, len);
+			}
+
+			[mtkMesh release];
+
+			return out;
+		}
+	
+		static auto LoadMaterialsInternal(id<MTLDevice> device, MDLMesh* mdlMesh, std::unordered_map<MDLMaterial*, uint32_t>& matIndex) -> void
+		{
+			MTKMesh* mtkMesh = [[MTKMesh alloc] initWithMesh:mdlMesh device:device error:nil];
+			
+			std::vector<std::string> Materials;
+			for (MDLSubmesh* sm in mdlMesh.submeshes)
+			{
+				MDLMaterial* mdlMat = sm.material;
+				if (mdlMat && matIndex.find(mdlMat) == matIndex.end())
+				{
+					uint32_t idx = (uint32_t)Materials.size();
+					Materials.emplace_back([mdlMat.name UTF8String]);
+					matIndex[mdlMat] = idx;
+				}
+			}
+
+			[mtkMesh release];
+		}
+
+		auto LoadData(MTL::Device* Device, const char* Path) -> void*
+		{
+			@autoreleasepool
+			{
+				auto allocator = [[MTKMeshBufferAllocator alloc] initWithDevice:(id<MTLDevice>)Device];
+
+				NSString* nsPath = [NSString stringWithUTF8String:Path];
+				NSURL* url = [NSURL fileURLWithPath:nsPath];
+
+				auto vertexDescriptor = GetStaticMeshVertexDescriptor();
+				MDLAsset* asset = [[MDLAsset alloc] initWithURL:url vertexDescriptor:vertexDescriptor bufferAllocator:allocator];
+				for (MDLObject *object in asset) {
+					UpdateMeshes(object, vertexDescriptor);
+				}
+
+				return (void*)asset;
+			}
+		}
+
+		auto FreeData(void* Data) -> void
+		{
+			auto* asset = (MDLAsset*)(Data);
+			if (asset)
+			{
+				[asset release];
+			}
+		}
+
+		auto LoadMesh(MTL::Device* Device, void* Data) -> std::vector<Mesh::FMeshData>
+		{
+			auto* asset = (MDLAsset*)(Data);
+			NSMutableArray<MDLMesh*>* meshes = [NSMutableArray array];
+			for (MDLObject* object in asset) {
+				CollectMeshesFromObject(object, meshes);
+			}
+
+			std::vector<Mesh::FMeshData> Result;
+			Result.reserve(meshes.count);
+
+			std::unordered_map<MDLMaterial*, uint32_t> matIndex;
+			for (u32 idx = 0; idx < meshes.count; idx++)
+			{
+				Result.emplace_back(LoadMeshInternal((id<MTLDevice>)Device, meshes[idx], matIndex));
+			}
+
+			return Result;
+		}
+
+		auto LoadMaterial(MTL::Device* Device, void* Data) -> std::vector<Mesh::FMaterial>
+		{
+			auto* asset = (MDLAsset*)(Data);
+			NSMutableArray<MDLMesh*>* meshes = [NSMutableArray array];
+			for (MDLObject* object in asset) {
+				CollectMeshesFromObject(object, meshes);
+			}
+
+
+			std::unordered_map<MDLMaterial*, uint32_t> matIndex;
+			for (u32 idx = 0; idx < meshes.count; idx++)
+			{
+				LoadMaterialsInternal((id<MTLDevice>)Device, meshes[idx], matIndex);
+			}
+			
+			std::vector<Mesh::FMaterial> Result;
+			Result.reserve(matIndex.size());
+			for (auto& [mat, idx] : matIndex)
+			{
+				Result.emplace_back(ConvertMaterial(mat));
+			}
+
+			return Result;
+		}
+	} // namespace mdl
 }
