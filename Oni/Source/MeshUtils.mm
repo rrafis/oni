@@ -863,7 +863,6 @@ namespace Engine::Mesh
 				CollectMeshesFromObject(object, meshes);
 			}
 
-
 			std::unordered_map<MDLMaterial*, uint32_t> matIndex;
 			for (u32 idx = 0; idx < meshes.count; idx++)
 			{
@@ -878,6 +877,123 @@ namespace Engine::Mesh
 			}
 
 			return Result;
+		}
+
+		auto LoadSphere(const std::string& Name, MTL::Device* Device, f32 Radius, u32 Segmentes) -> Mesh::FMeshData
+		{
+			@autoreleasepool
+			{
+				auto allocator = [[MTKMeshBufferAllocator alloc] initWithDevice:(id<MTLDevice>)Device];
+				MDLMesh* mdlMesh = [[MDLMesh alloc] initSphereWithExtent:{Radius*2.0f, Radius*2.0f, Radius*2.0f}
+																segments:{Segmentes,Segmentes}
+														   inwardNormals:NO
+															geometryType:MDLGeometryTypeTriangles
+															   allocator:allocator];
+
+				// Generate tangents for PBR normal mapping
+				[mdlMesh addNormalsWithAttributeNamed:MDLVertexAttributeNormal
+										creaseThreshold:0.0];
+				[mdlMesh addTangentBasisForTextureCoordinateAttributeNamed:MDLVertexAttributeTextureCoordinate
+														normalAttributeNamed:MDLVertexAttributeNormal
+														tangentAttributeNamed:MDLVertexAttributeTangent];
+				mdlMesh.vertexDescriptor = GetStaticMeshVertexDescriptor();
+				mdlMesh.name = [NSString stringWithUTF8String:Name.data()];
+
+				NSError* err = nil;
+				// Assign a simple material
+				MDLMaterial* mat = [[MDLMaterial alloc] initWithName:@"Default"
+													scatteringFunction:[[MDLScatteringFunction alloc] init]];
+				MDLMaterialProperty* baseColor = [[MDLMaterialProperty alloc] initWithName:@"baseColor"
+																					semantic:MDLMaterialSemanticBaseColor float4:{1,1,1,1}];
+				[mat setProperty:baseColor];
+
+				for (MDLSubmesh* sm in mdlMesh.submeshes)
+				{
+					sm.material = mat;
+				}
+
+				std::unordered_map<MDLMaterial*, uint32_t> matIndex;
+				auto Result = LoadMeshInternal((id<MTLDevice>)Device, mdlMesh, matIndex);
+				return Result;
+			}
+		}
+
+		auto LoadBox(const std::string& Name, MTL::Device* Device, glm::vec3 Extent, glm::uvec3 Segmentes) -> Mesh::FMeshData
+		{
+			@autoreleasepool
+			{
+				auto allocator = [[MTKMeshBufferAllocator alloc] initWithDevice:(id<MTLDevice>)Device];
+				MDLMesh* mdlMesh = [[MDLMesh alloc] initBoxWithExtent:{Extent.x, Extent.y, Extent.z} 
+															 segments:{Segmentes.x, Segmentes.y, Segmentes.z}
+														inwardNormals:NO
+														 geometryType:MDLGeometryTypeTriangles
+															allocator:allocator];
+
+				// Generate tangents for PBR normal mapping
+				[mdlMesh addNormalsWithAttributeNamed:MDLVertexAttributeNormal
+										creaseThreshold:0.0];
+				[mdlMesh addTangentBasisForTextureCoordinateAttributeNamed:MDLVertexAttributeTextureCoordinate
+														normalAttributeNamed:MDLVertexAttributeNormal
+														tangentAttributeNamed:MDLVertexAttributeTangent];
+				mdlMesh.vertexDescriptor = GetStaticMeshVertexDescriptor();
+				mdlMesh.name = [NSString stringWithUTF8String:Name.data()];
+
+				NSError* err = nil;
+				// Assign a simple material
+				MDLMaterial* mat = [[MDLMaterial alloc] initWithName:@"Default"
+													scatteringFunction:[[MDLScatteringFunction alloc] init]];
+				MDLMaterialProperty* baseColor = [[MDLMaterialProperty alloc] initWithName:@"baseColor"
+																					semantic:MDLMaterialSemanticBaseColor float4:{1,1,1,1}];
+				[mat setProperty:baseColor];
+
+				for (MDLSubmesh* sm in mdlMesh.submeshes)
+				{
+					sm.material = mat;
+				}
+
+				std::unordered_map<MDLMaterial*, uint32_t> matIndex;
+				auto Result = LoadMeshInternal((id<MTLDevice>)Device, mdlMesh, matIndex);
+				return Result;
+			}
+		}
+		auto LoadCapsule(const std::string& Name, MTL::Device* Device, glm::vec3 Extent, glm::uvec3 Segmentes) -> Mesh::FMeshData
+		{
+			@autoreleasepool
+			{
+				auto allocator = [[MTKMeshBufferAllocator alloc] initWithDevice:(id<MTLDevice>)Device];
+				MDLMesh* mdlMesh = [[MDLMesh alloc] initCapsuleWithExtent:{Extent.x, Extent.y, Extent.z} 
+														 cylinderSegments:{Segmentes.x, Segmentes.y}
+													   hemisphereSegments:Segmentes.z
+															inwardNormals:NO
+															 geometryType:MDLGeometryTypeTriangles
+																allocator:allocator];
+
+				// Generate tangents for PBR normal mapping
+				[mdlMesh addNormalsWithAttributeNamed:MDLVertexAttributeNormal
+										creaseThreshold:0.0];
+				[mdlMesh addTangentBasisForTextureCoordinateAttributeNamed:MDLVertexAttributeTextureCoordinate
+														normalAttributeNamed:MDLVertexAttributeNormal
+														tangentAttributeNamed:MDLVertexAttributeTangent];
+				mdlMesh.vertexDescriptor = GetStaticMeshVertexDescriptor();
+				mdlMesh.name = [NSString stringWithUTF8String:Name.data()];
+
+				NSError* err = nil;
+				// Assign a simple material
+				MDLMaterial* mat = [[MDLMaterial alloc] initWithName:@"Default"
+													scatteringFunction:[[MDLScatteringFunction alloc] init]];
+				MDLMaterialProperty* baseColor = [[MDLMaterialProperty alloc] initWithName:@"baseColor"
+																					semantic:MDLMaterialSemanticBaseColor float4:{1,1,1,1}];
+				[mat setProperty:baseColor];
+
+				for (MDLSubmesh* sm in mdlMesh.submeshes)
+				{
+					sm.material = mat;
+				}
+
+				std::unordered_map<MDLMaterial*, uint32_t> matIndex;
+				auto Result = LoadMeshInternal((id<MTLDevice>)Device, mdlMesh, matIndex);
+				return Result;
+			}
 		}
 	} // namespace mdl
 }

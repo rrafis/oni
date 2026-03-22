@@ -24,8 +24,17 @@ namespace Engine::Mesh
 			{
 				case EIndexType::UInt16:
 					return MTL::IndexTypeUInt16;
-				case EIndexType::UInt32:
+				default:
 					return MTL::IndexTypeUInt32;
+			}
+		}
+
+		inline auto MapIndexType(usize Stride) -> MTL::IndexType
+		{
+			switch (Stride)
+			{
+				case sizeof(u16):
+					return MTL::IndexTypeUInt16;
 				default:
 					return MTL::IndexTypeUInt32;
 			}
@@ -77,6 +86,72 @@ namespace Engine::Mesh
 				default:
 					return MTL::VertexFormatInvalid;
 			}
+		}
+
+		auto ProcessMeshData(MTL::Device* Device, const Mesh::FMeshData& MeshData, std::unordered_map<std::string, u32>& MaterialMap) -> FMeshRenderer
+		{
+			FMeshRenderer MeshRender;
+			MeshRender.VertexBuffer =
+				NS::TransferPtr(Device->newBuffer(MeshData.VertexStream.Data.data(), MeshData.VertexStream.Data.size(), MTL::ResourceStorageModeShared));
+			MeshRender.UniformBuffer = NS::TransferPtr(Device->newBuffer(sizeof(Engine::Mesh::FMeshUniform), MTL::ResourceStorageModeShared));
+			MeshRender.MaterialIndexBuffer = NS::TransferPtr(Device->newBuffer(sizeof(u32) * MeshData.Submeshes.size(), MTL::ResourceStorageModeShared));
+
+			NS::Error* error;
+			NS::SharedPtr<MTL::ResidencySetDescriptor> ResSetDesc = NS::TransferPtr(MTL::ResidencySetDescriptor::alloc()->init());
+
+			ResSetDesc->setInitialCapacity(1 + 1 + MeshRender.Submeshes.size()); // Vertex buffer + uniform buffer + Index buffer for each submesh
+			MeshRender.ResidencySet = NS::TransferPtr(Device->newResidencySet(ResSetDesc.get(), &error));
+			if (!MeshRender.ResidencySet)
+			{
+				NS::String* desc = error->localizedDescription();
+				printf("Shader compile error: %s\n", desc->utf8String());
+			}
+
+			NS::SharedPtr<MTL4::ArgumentTableDescriptor> ArgTableVertDesc = NS::TransferPtr(MTL4::ArgumentTableDescriptor::alloc()->init());
+			ArgTableVertDesc->setMaxBufferBindCount(5);
+			ArgTableVertDesc->setMaxTextureBindCount(0);
+			ArgTableVertDesc->setMaxSamplerStateBindCount(0);
+			MeshRender.ArgTableVert = NS::TransferPtr(Device->newArgumentTable(ArgTableVertDesc.get(), &error));
+
+			MeshRender.ArgTableVert->setAddress(MeshRender.VertexBuffer->gpuAddress(), 0);
+			MeshRender.ArgTableVert->setAddress(MeshRender.UniformBuffer->gpuAddress(), 1);
+			MeshRender.ResidencySet->addAllocation(MeshRender.VertexBuffer.get());
+			MeshRender.ResidencySet->addAllocation(MeshRender.UniformBuffer.get());
+			MeshRender.ResidencySet->addAllocation(MeshRender.MaterialIndexBuffer.get());
+
+			NS::SharedPtr<MTL4::ArgumentTableDescriptor> ArgTableFragDesc = NS::TransferPtr(MTL4::ArgumentTableDescriptor::alloc()->init());
+			ArgTableFragDesc->setMaxBufferBindCount(2);
+			ArgTableFragDesc->setMaxTextureBindCount(0);
+			ArgTableFragDesc->setMaxSamplerStateBindCount(1);
+
+			u32 Idx = 0;
+			u32* MatIndex = static_cast<u32*>(MeshRender.MaterialIndexBuffer->contents());
+			for (auto& Submesh : MeshData.Submeshes)
+			{
+				MatIndex[Idx] = MaterialMap[MeshData.Materials[Submesh.MaterialIndex]];
+
+				FMeshRenderer::FSubmesh Sub;
+				Sub.IndexType = Engine::Mesh::Metal::MapIndexType(Submesh.IndexStream.Stride);
+				Sub.IndexCount = Submesh.IndexStream.Count;
+				Sub.IndexBuffer =
+					NS::TransferPtr(Device->newBuffer(Submesh.IndexStream.Data.data(), Submesh.IndexStream.Data.size(), MTL::ResourceStorageModeShared));
+				Sub.bDoubleSided = true; // MeshData.Materials[Sub.MaterialIndex].DoubleSided;
+				Sub.bWindingOrderClockWise = true;
+
+				Sub.IbSize = Sub.IndexCount * Submesh.IndexStream.Stride;
+				Sub.IbAddress = Sub.IndexBuffer->gpuAddress();
+
+				Sub.ArgTableFrag = NS::TransferPtr(Device->newArgumentTable(ArgTableFragDesc.get(), &error));
+				Sub.ArgTableFrag->setAddress(MeshRender.MaterialIndexBuffer->gpuAddress() + Idx * sizeof(u32), 1);
+				MeshRender.ResidencySet->addAllocation(Sub.IndexBuffer.get());
+
+				MeshRender.Submeshes.emplace_back(Sub);
+
+				Idx++;
+			}
+			MeshRender.ResidencySet->commit();
+
+			return MeshRender;
 		}
 
 		auto ProcessMeshData(MTL::Device* Device, const MDLIO::FMeshData& MeshData, u32 MaterialIndexOffset) -> FMeshRenderer
@@ -655,10 +730,10 @@ namespace Engine::Mesh
 				FMaterial& Meterial = Result.emplace_back();
 
 				const cgltf_pbr_metallic_roughness& pbr = srcMat.pbr_metallic_roughness;
-				memcpy(&Meterial.BaseColorFactor.r, pbr.base_color_factor, sizeof(float) * 4);
+				memcpy(&Meterial.BaseColorFactor.r, pbr.base_color_factor, sizeof(f32) * 4);
 				Meterial.MetallicFactor = pbr.metallic_factor;
 				Meterial.RoughnessFactor = pbr.roughness_factor;
-				memcpy(&Meterial.EmissiveFactor.r, srcMat.emissive_factor, sizeof(float) * 3);
+				memcpy(&Meterial.EmissiveFactor.r, srcMat.emissive_factor, sizeof(f32) * 3);
 
 				// Copy texture paths
 				auto GetTexturePath = [](const cgltf_texture_view* view) -> std::string {
@@ -680,274 +755,4 @@ namespace Engine::Mesh
 			return Result;
 		}
 	} // namespace gltf
-
-	auto GenerateSphere(const std::string& Name, f32 Radius, u32 Segments) -> FMeshData
-	{
-		gltf::FMeshDataInternal Internal{};
-		Internal.bHasSkinData = false;
-		Internal.Name = Name;
-		Internal.SubmeshData.resize(1);
-		Internal.SubmeshData[0].IndexType = EIndexType::UInt32;
-		Internal.SubmeshData[0].MaterialIndex = 0;
-		Internal.SubmeshData[0].PrimitiveType = EPrimitiveType::Triangles;
-		Internal.Materials.emplace_back("Default");
-
-		std::vector<gltf::FVertex>& vertices = Internal.Vertices;
-		std::vector<u32>& indices = Internal.SubmeshData[0].Indices;
-
-		const u32 stacks = Segments;
-		const u32 slices = Segments;
-
-		for (u32 t = 0; t <= stacks; t++)
-		{
-			f32 theta = (f32)t / stacks * glm::pi<f32>();
-			f32 y = cos(theta);
-			f32 r = sin(theta);
-
-			for (u32 p = 0; p <= slices; p++)
-			{
-				f32 phi = (f32)p / slices * 2.0f * glm::pi<f32>();
-				f32 x = r * cos(phi);
-				f32 z = r * sin(phi);
-
-				gltf::FVertex v;
-				v.Position = glm::vec3(x, y, z) * Radius;
-				v.Normal = glm::normalize(v.Position);
-				v.TexCoord = glm::vec2((f32)p / slices, (f32)t / stacks);
-				vertices.push_back(v);
-			}
-		}
-
-		for (u32 t = 0; t < stacks; t++)
-		{
-			for (u32 p = 0; p < slices; p++)
-			{
-				u32 v0 = t * (slices + 1) + p;
-				u32 v1 = v0 + 1;
-				u32 v2 = (t + 1) * (slices + 1) + p;
-				u32 v3 = v2 + 1;
-
-				indices.push_back(v0);
-				indices.push_back(v2);
-				indices.push_back(v1);
-				indices.push_back(v1);
-				indices.push_back(v2);
-				indices.push_back(v3);
-			}
-		}
-		Internal.SubmeshData[0].IndexCount = (u32)indices.size();
-
-		FMeshData Result;
-		gltf::ToMeshData(Internal, Result);
-		return Result;
-	}
-
-	auto GenerateBox(const std::string& Name, glm::vec3 Extent, glm::uvec3 Segments) -> FMeshData
-	{
-		gltf::FMeshDataInternal Internal{};
-		Internal.bHasSkinData = false;
-		Internal.Name = Name;
-		Internal.SubmeshData.resize(1);
-		Internal.SubmeshData[0].IndexType = EIndexType::UInt32;
-		Internal.SubmeshData[0].MaterialIndex = 0;
-		Internal.SubmeshData[0].PrimitiveType = EPrimitiveType::Triangles;
-		Internal.Materials.emplace_back("Default");
-
-		std::vector<gltf::FVertex>& vertices = Internal.Vertices;
-		std::vector<u32>& indices = Internal.SubmeshData[0].Indices;
-
-		auto AddFace = [&](glm::vec3 normal, glm::vec3 tangent, glm::vec3 bitangent, glm::vec2 uvScale) {
-			for (u32 y = 0; y <= Segments.y; y++)
-			{
-				for (u32 x = 0; x <= Segments.x; x++)
-				{
-					f32 u = (f32)x / Segments.x;
-					f32 v = (f32)y / Segments.y;
-					glm::vec3 pos = normal * Extent + tangent * (u * 2.0f - 1.0f) * Extent.x + bitangent * (v * 2.0f - 1.0f) * Extent.y;
-					gltf::FVertex vtx;
-					vtx.Position = pos;
-					vtx.Normal = normal;
-					vtx.TexCoord = glm::vec2(u, v) * uvScale;
-					vertices.push_back(vtx);
-				}
-			}
-		};
-
-		// Generate 6 faces (order: +X, -X, +Y, -Y, +Z, -Z)
-		AddFace({ 1, 0, 0 }, { 0, 0, -1 }, { 0, 1, 0 }, { 1, 1 });
-		AddFace({ -1, 0, 0 }, { 0, 0, 1 }, { 0, 1, 0 }, { 1, 1 });
-		AddFace({ 0, 1, 0 }, { 1, 0, 0 }, { 0, 0, 1 }, { 1, 1 });
-		AddFace({ 0, -1, 0 }, { 1, 0, 0 }, { 0, 0, -1 }, { 1, 1 });
-		AddFace({ 0, 0, 1 }, { 1, 0, 0 }, { 0, 1, 0 }, { 1, 1 });
-		AddFace({ 0, 0, -1 }, { -1, 0, 0 }, { 0, 1, 0 }, { 1, 1 });
-
-		// Create indices for each face
-		for (u32 face = 0; face < 6; face++)
-		{
-			u32 base = face * (Segments.x + 1) * (Segments.y + 1);
-			for (u32 y = 0; y < Segments.y; y++)
-			{
-				for (u32 x = 0; x < Segments.x; x++)
-				{
-					u32 v0 = base + y * (Segments.x + 1) + x;
-					u32 v1 = v0 + 1;
-					u32 v2 = v0 + (Segments.x + 1);
-					u32 v3 = v2 + 1;
-
-					indices.push_back(v0);
-					indices.push_back(v2);
-					indices.push_back(v1);
-					indices.push_back(v1);
-					indices.push_back(v2);
-					indices.push_back(v3);
-				}
-			}
-		}
-		Internal.SubmeshData[0].IndexCount = (u32)indices.size();
-
-		FMeshData Result;
-		gltf::ToMeshData(Internal, Result);
-		return Result;
-	}
-
-	auto GenerateCapsule(const std::string& Name, glm::vec3 Extent, glm::uvec3 Segments) -> FMeshData
-	{
-		gltf::FMeshDataInternal Internal{};
-		Internal.bHasSkinData = false;
-		Internal.Name = Name;
-		Internal.SubmeshData.resize(1);
-		Internal.SubmeshData[0].IndexType = EIndexType::UInt32;
-		Internal.SubmeshData[0].MaterialIndex = 0;
-		Internal.SubmeshData[0].PrimitiveType = EPrimitiveType::Triangles;
-		Internal.Materials.emplace_back("Default");
-
-		std::vector<gltf::FVertex>& vertices = Internal.Vertices;
-		std::vector<u32>& indices = Internal.SubmeshData[0].Indices;
-
-		f32 radius = glm::min(Extent.x, Extent.z);
-		f32 halfHeight = Extent.y - radius;
-
-		// Generate cylinder body
-		for (u32 t = 0; t <= Segments.y; t++)
-		{
-			f32 y = (f32)t / Segments.y * 2.0f * halfHeight - halfHeight;
-			for (u32 p = 0; p <= Segments.x; p++)
-			{
-				f32 phi = (f32)p / Segments.x * 2.0f * glm::pi<f32>();
-				f32 x = cos(phi) * radius;
-				f32 z = sin(phi) * radius;
-
-				gltf::FVertex v;
-				v.Position = glm::vec3(x, y, z);
-				v.Normal = glm::normalize(glm::vec3(x, 0, z));
-				v.TexCoord = glm::vec2((f32)p / Segments.x, (f32)t / Segments.y);
-				vertices.push_back(v);
-			}
-		}
-
-		// Generate top hemisphere
-		for (u32 t = 0; t <= Segments.y / 2; t++)
-		{
-			f32 theta = (f32)t / (Segments.y / 2) * glm::pi<f32>() / 2.0f;
-			f32 y = sin(theta) * radius + halfHeight;
-			f32 r = cos(theta) * radius;
-			for (u32 p = 0; p <= Segments.x; p++)
-			{
-				f32 phi = (f32)p / Segments.x * 2.0f * glm::pi<f32>();
-				f32 x = cos(phi) * r;
-				f32 z = sin(phi) * r;
-
-				gltf::FVertex v;
-				v.Position = glm::vec3(x, y, z);
-				v.Normal = glm::normalize(v.Position - glm::vec3(0, halfHeight, 0));
-				v.TexCoord = glm::vec2((f32)p / Segments.x, (f32)t / (Segments.y / 2));
-				vertices.push_back(v);
-			}
-		}
-
-		// Generate bottom hemisphere
-		for (u32 t = 0; t <= Segments.y / 2; t++)
-		{
-			f32 theta = (f32)t / (Segments.y / 2) * glm::pi<f32>() / 2.0f;
-			f32 y = -sin(theta) * radius - halfHeight;
-			f32 r = cos(theta) * radius;
-			for (u32 p = 0; p <= Segments.x; p++)
-			{
-				f32 phi = (f32)p / Segments.x * 2.0f * glm::pi<f32>();
-				f32 x = cos(phi) * r;
-				f32 z = sin(phi) * r;
-
-				gltf::FVertex v;
-				v.Position = glm::vec3(x, y, z);
-				v.Normal = glm::normalize(v.Position - glm::vec3(0, -halfHeight, 0));
-				v.TexCoord = glm::vec2((f32)p / Segments.x, (f32)t / (Segments.y / 2));
-				vertices.push_back(v);
-			}
-		}
-
-		// Create indices for cylinder body
-		u32 base = 0;
-		for (u32 t = 0; t < Segments.y; t++)
-		{
-			for (u32 p = 0; p < Segments.x; p++)
-			{
-				u32 v0 = base + t * (Segments.x + 1) + p;
-				u32 v1 = v0 + 1;
-				u32 v2 = v0 + (Segments.x + 1);
-				u32 v3 = v2 + 1;
-
-				indices.push_back(v0);
-				indices.push_back(v2);
-				indices.push_back(v1);
-				indices.push_back(v1);
-				indices.push_back(v2);
-				indices.push_back(v3);
-			}
-		}
-
-		// Create indices for top hemisphere
-		base = (Segments.y + 1) * (Segments.x + 1);
-		for (u32 t = 0; t < Segments.y / 2; t++)
-		{
-			for (u32 p = 0; p < Segments.x; p++)
-			{
-				u32 v0 = base + t * (Segments.x + 1) + p;
-				u32 v1 = v0 + 1;
-				u32 v2 = v0 + (Segments.x + 1);
-				u32 v3 = v2 + 1;
-
-				indices.push_back(v0);
-				indices.push_back(v2);
-				indices.push_back(v1);
-				indices.push_back(v1);
-				indices.push_back(v2);
-				indices.push_back(v3);
-			}
-		}
-
-		// Create indices for bottom hemisphere
-		base = (Segments.y + 1) * (Segments.x + 1) + (Segments.y / 2 + 1) * (Segments.x + 1);
-		for (u32 t = 0; t < Segments.y / 2; t++)
-		{
-			for (u32 p = 0; p < Segments.x; p++)
-			{
-				u32 v0 = base + t * (Segments.x + 1) + p;
-				u32 v1 = v0 + 1;
-				u32 v2 = v0 + (Segments.x + 1);
-				u32 v3 = v2 + 1;
-
-				indices.push_back(v0);
-				indices.push_back(v2);
-				indices.push_back(v1);
-				indices.push_back(v1);
-				indices.push_back(v2);
-				indices.push_back(v3);
-			}
-		}
-		Internal.SubmeshData[0].IndexCount = (u32)indices.size();
-
-		FMeshData Result;
-		gltf::ToMeshData(Internal, Result);
-		return Result;
-	}
 } // namespace Engine::Mesh

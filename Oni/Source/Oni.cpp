@@ -222,8 +222,6 @@ namespace ph
 
 } // namespace ph
 
-constexpr f32 s_UnitsInMeter = 30.f;
-
 struct FMesh
 {
 	Engine::Mesh::FMeshRenderer Render;
@@ -284,6 +282,9 @@ struct FGameState
 	std::vector<Engine::Mesh::FMaterial> NewMaterials;
 	std::unordered_map<std::string, u32> SkeletonMap;
 	std::unordered_map<std::string, u32> MaterialMap;
+
+	std::vector<Engine::Mesh::FMeshRenderer> MeshRenderers;
+	std::vector<Engine::FTransform> MeshTransforms;
 
 	glm::vec3 CameraPosition;
 
@@ -412,6 +413,94 @@ auto CreateDummyTexture(FGameState& State, const char* Name = "Dummy") -> MTL::R
 	RawTexture.Pixels.emplace_back(255);
 
 	return CreateTexture(State, State.Device, RawTexture, Name, false);
+}
+
+auto LoadMesh2(FGameState& State, MTL::Device* Device, std::vector<Engine::Mesh::FMeshData> Meshes, std::vector<Engine::Mesh::FMaterial> Materials = {},
+	const char* RootPath = nullptr, std::vector<Engine::Mesh::FSkeleton> Skeletons = {}) -> std::vector<Engine::Mesh::FMeshRenderer>
+{
+	for (auto& Mesh : Meshes)
+	{
+		State.NewMeshes.emplace_back(Mesh);
+	}
+
+	u32 Offset = State.SkeletonMap.size();
+	for (u32 Idx = 0; Idx < Skeletons.size(); Idx++)
+	{
+		auto& sk = State.NewSkeletons.emplace_back(Skeletons[Idx]);
+		State.SkeletonMap[sk.Name] = Offset + Idx;
+	}
+
+	Offset = State.MaterialMap.size();
+	for (u32 Idx = 0; Idx < Materials.size(); Idx++)
+	{
+		auto& mat = State.NewMaterials.emplace_back(Materials[Idx]);
+
+		Engine::Mesh::FRenderMaterial RenderMat;
+		RenderMat.BaseColorFactor = mat.BaseColorFactor;
+		RenderMat.EmissiveFactor = mat.EmissiveFactor;
+		RenderMat.MetallicFactor = mat.MetallicFactor;
+		RenderMat.RoughnessFactor = mat.RoughnessFactor;
+
+		if (mat.BaseColorTex.size() > 0)
+			RenderMat.BaseColorTex = LoadTexture(State, RootPath, mat.BaseColorTex.data());
+		else
+			RenderMat.BaseColorTex = State.DummyTexture;
+
+		if (mat.MetallicRoughnessTex.size() > 0)
+			RenderMat.MetallicRoughnessTex = LoadTexture(State, RootPath, mat.MetallicRoughnessTex.data());
+
+		if (mat.NormalTex.size() > 0)
+			RenderMat.NormalTex = LoadTexture(State, RootPath, mat.NormalTex.data());
+
+		if (mat.EmissiveTex.size() > 0)
+			RenderMat.EmissiveTex = LoadTexture(State, RootPath, mat.EmissiveTex.data());
+
+		if (mat.OcclusionTex.size() > 0)
+			RenderMat.OcclusionTex = LoadTexture(State, RootPath, mat.OcclusionTex.data());
+
+		State.Materials.emplace_back(RenderMat);
+
+		State.MaterialMap[mat.Name] = Offset + Idx;
+	}
+
+	std::vector<Engine::Mesh::FMeshRenderer> Result;
+	for (auto& MeshData : Meshes)
+	{
+		Result.emplace_back(Engine::Mesh::Metal::ProcessMeshData(Device, MeshData, State.MaterialMap));
+	}
+
+	return Result;
+}
+
+auto LoadMesh2(FGameState& State, MTL::Device* Device, const char* RootPath, const char* Name) -> std::vector<Engine::Mesh::FMeshRenderer>
+{
+	auto LoadPath = std::filesystem::path() / ContentPath / RootPath / Name;
+	auto ext = LoadPath.extension();
+	if (!LoadPath.has_extension())
+	{
+		return {};
+	}
+
+	std::vector<Engine::Mesh::FMeshData> Meshes;
+	std::vector<Engine::Mesh::FSkeleton> Skeletons;
+	std::vector<Engine::Mesh::FMaterial> Materials;
+	if (LoadPath.extension() == ".gltf" || LoadPath.extension() == ".glb")
+	{
+		auto Data = Engine::Mesh::gltf::LoadData(LoadPath.c_str());
+		Meshes = Engine::Mesh::gltf::LoadMesh(Data);
+		Skeletons = Engine::Mesh::gltf::LoadSkeleton(Data);
+		Materials = Engine::Mesh::gltf::LoadMaterial(Data);
+		Engine::Mesh::gltf::FreeData(Data);
+	}
+	else
+	{
+		auto Data = Engine::Mesh::mdl::LoadData(Device, LoadPath.c_str());
+		Meshes = Engine::Mesh::mdl::LoadMesh(Device, Data);
+		Materials = Engine::Mesh::mdl::LoadMaterial(Device, Data);
+		Engine::Mesh::mdl::FreeData(Data);
+	}
+
+	return LoadMesh2(State, Device, Meshes, Materials, RootPath, Skeletons);
 }
 
 auto LoadMesh(FGameState& State, MTL::Device* Device, const char* RootPath, const char* Name) -> Engine::Mesh::FMeshRenderer
@@ -617,94 +706,58 @@ RE_API auto GameInitialize(FGameMemory& Memory) -> void
 
 	// Setup a defualt material
 	{
-		auto& mat = State.NewMaterials.emplace_back(Engine::Mesh::FMaterial{ .Name = "Defulat" });
+		auto& mat = State.NewMaterials.emplace_back(Engine::Mesh::FMaterial{ .Name = "Default" });
 		State.MaterialMap[mat.Name] = State.NewMaterials.size() - 1;
+
+		Engine::Mesh::FRenderMaterial RenderMat;
+		RenderMat.BaseColorFactor = mat.BaseColorFactor;
+		RenderMat.EmissiveFactor = mat.EmissiveFactor;
+		RenderMat.MetallicFactor = mat.MetallicFactor;
+		RenderMat.RoughnessFactor = mat.RoughnessFactor;
+		State.Materials.emplace_back(RenderMat);
 	}
 
-	// Test load GLTF skeletal mesh
 	{
-		auto LoadPath = std::filesystem::path() / ContentPath / "meshes" / "Woman.gltf";
-		auto data = Engine::Mesh::gltf::LoadData(LoadPath.c_str());
-		auto Meshes = Engine::Mesh::gltf::LoadMesh(data);
-		auto Skeletons = Engine::Mesh::gltf::LoadSkeleton(data);
-		auto Materials = Engine::Mesh::gltf::LoadMaterial(data);
-		Engine::Mesh::gltf::FreeData(data);
-
+		auto Meshes = LoadMesh2(State, State.Device, "meshes/samanosuke_future", "Future_Samanosuke.obj");
 		for (auto& Mesh : Meshes)
 		{
-			State.NewMeshes.emplace_back(Mesh);
-		}
-
-		u32 Offset = State.SkeletonMap.size();
-		for (u32 Idx = 0; Idx < Skeletons.size(); Idx++)
-		{
-			auto& sk = State.NewSkeletons.emplace_back(Skeletons[Idx]);
-			State.SkeletonMap[sk.Name] = Offset + Idx;
-		}
-
-		Offset = State.MaterialMap.size();
-		for (u32 Idx = 0; Idx < Materials.size(); Idx++)
-		{
-			auto& mat = State.NewMaterials.emplace_back(Materials[Idx]);
-			State.MaterialMap[mat.Name] = Offset + Idx;
+			State.MeshRenderers.emplace_back(Mesh);
+			State.MeshTransforms.emplace_back(Engine::FTransform{ .Position = glm::vec3(0.0f, 0.0f, 0.0f),
+				.Rotation = glm::quat(glm::vec3(glm::radians(-90.0f), 0.0f, 0.0f)),
+				.Scale = glm::vec3(1.0f / 30.0f) });
 		}
 	}
 
-	// Test load GLTF static mesh
 	{
-		auto LoadPath = std::filesystem::path() / ContentPath / "meshes" / "DamagedHelmet.glb";
-		auto data = Engine::Mesh::gltf::LoadData(LoadPath.c_str());
-		auto Meshes = Engine::Mesh::gltf::LoadMesh(data);
-		auto Skeletons = Engine::Mesh::gltf::LoadSkeleton(data);
-		auto Materials = Engine::Mesh::gltf::LoadMaterial(data);
-		Engine::Mesh::gltf::FreeData(data);
-
+		auto Meshes = LoadMesh2(State, State.Device, "meshes/samanosuke_weapons", "Tensou_lvl_3.obj");
 		for (auto& Mesh : Meshes)
 		{
-			State.NewMeshes.emplace_back(Mesh);
-		}
-
-		u32 Offset = State.SkeletonMap.size();
-		for (u32 Idx = 0; Idx < Skeletons.size(); Idx++)
-		{
-			auto& sk = State.NewSkeletons.emplace_back(Skeletons[Idx]);
-			State.SkeletonMap[sk.Name] = Offset + Idx;
-		}
-
-		Offset = State.MaterialMap.size();
-		for (u32 Idx = 0; Idx < Materials.size(); Idx++)
-		{
-			auto& mat = State.NewMaterials.emplace_back(Materials[Idx]);
-			State.MaterialMap[mat.Name] = Offset + Idx;
+			State.MeshRenderers.emplace_back(Mesh);
+			State.MeshTransforms.emplace_back(
+				Engine::FTransform{ .Rotation = glm::quat(glm::vec3(glm::radians(-90.0f), 0.0f, 0.0f)), .Scale = glm::vec3(1.0f / 30.0f) });
 		}
 	}
 
-	// Test load ModelIO static mesh
 	{
-		auto LoadPath = std::filesystem::path() / ContentPath / "meshes" / "samanosuke_future" / "Future_Samanosuke.obj";
-		auto data = Engine::Mesh::mdl::LoadData(State.Device, LoadPath.c_str());
-		auto Meshes = Engine::Mesh::mdl::LoadMesh(State.Device, data);
-		auto Materials = Engine::Mesh::mdl::LoadMaterial(State.Device, data);
-		Engine::Mesh::mdl::FreeData(data);
-
+		auto Box = Engine::Mesh::mdl::LoadBox("Test Box", State.Device, glm::vec3(100.0f, 1.0f, 100.f), glm::uvec3(10, 1, 10));
+		auto Meshes = LoadMesh2(State, State.Device, { Box });
 		for (auto& Mesh : Meshes)
 		{
-			State.NewMeshes.emplace_back(Mesh);
-		}
-
-		u32 Offset = State.MaterialMap.size();
-		for (u32 Idx = 0; Idx < Materials.size(); Idx++)
-		{
-			auto& mat = State.NewMaterials.emplace_back(Materials[Idx]);
-			State.MaterialMap[mat.Name] = Offset + Idx;
+			auto& Render = State.MeshRenderers.emplace_back(Mesh);
+			Render.Submeshes[0].bWireframe = true;
+			State.MeshTransforms.emplace_back(Engine::FTransform{ .Position = glm::vec3(0.0f, -0.5f, 0.0f) });
 		}
 	}
 
-	// Generate test meshes
 	{
-		State.NewMeshes.emplace_back(Engine::Mesh::GenerateBox("Test Box", glm::vec3(10.0f, 1.0f, 10.f) * s_UnitsInMeter, glm::uvec3(1, 1, 1)));
-		State.NewMeshes.emplace_back(Engine::Mesh::GenerateCapsule("Test Capsule", glm::vec3(0.25f, 1.75f, 0.25f) * s_UnitsInMeter, glm::uvec3(12, 4, 6)));
-		State.NewMeshes.emplace_back(Engine::Mesh::GenerateSphere("Test Sphere", 1.0f * s_UnitsInMeter, 12));
+		auto Capsule = Engine::Mesh::mdl::LoadCapsule("Test Capsule", State.Device, glm::vec3(0.25f, 1.75f, 0.25f), glm::uvec3(12, 4, 6));
+		auto Meshes = LoadMesh2(State, State.Device, { Capsule });
+		for (auto& Mesh : Meshes)
+		{
+			auto& Render = State.MeshRenderers.emplace_back(Mesh);
+			Render.Submeshes[0].bWireframe = true;
+			State.MeshTransforms.emplace_back(Engine::FTransform{ .Position = glm::vec3(0.0f, 0.875f, 0.0f) });
+		}
 	}
 
 	State.Meshes.emplace_back();
@@ -717,10 +770,10 @@ RE_API auto GameInitialize(FGameMemory& Memory) -> void
 	State.Meshes[1].Render = LoadMesh(State, State.Device, "meshes/samanosuke_weapons", "Tensou_lvl_3.obj");
 	State.Meshes.emplace_back();
 	State.Meshes[2].Position = glm::vec3(0.0f, -0.5f, 0.0f);
-	State.Meshes[2].Render = LoadBox(State, State.Device, glm::vec3(100.0f, 1.0f, 100.0f) * s_UnitsInMeter, glm::uvec3(10, 1, 10));
+	State.Meshes[2].Render = LoadBox(State, State.Device, glm::vec3(100.0f, 1.0f, 100.0f), glm::uvec3(10, 1, 10));
 	State.Meshes.emplace_back();
 	State.Meshes[3].Position = glm::vec3(0.0f, 0.875f, 0.0f);
-	State.Meshes[3].Render = LoadCapsule(State, State.Device, glm::vec3(0.25f, 1.75f, 0.25f) * s_UnitsInMeter, glm::uvec3(12, 4, 6));
+	State.Meshes[3].Render = LoadCapsule(State, State.Device, glm::vec3(0.25f, 1.75f, 0.25f), glm::uvec3(12, 4, 6));
 
 	State.SkMesh.Position = glm::vec3(0.0f, 0.0f, 0.0f);
 	State.SkMesh.Rotation.y = -180.f;
@@ -736,8 +789,8 @@ RE_API auto GameInitialize(FGameMemory& Memory) -> void
 	State.LastRenderedPlayerPos = State.Player->Position;
 
 	State.FOV = 60.f;
-	State.Projection = glm::perspectiveFov(glm::radians(State.FOV), (f32)Props.Width, (f32)Props.Height, 0.01f * s_UnitsInMeter, 1000.0f * s_UnitsInMeter);
-	State.View = glm::lookAtLH(State.CameraPosition * s_UnitsInMeter, State.CameraPosition * s_UnitsInMeter + glm::vec3(0, 0, 1), glm::vec3(0, 1, 0));
+	State.Projection = glm::perspectiveFov(glm::radians(State.FOV), (f32)Props.Width, (f32)Props.Height, 0.01f, 1000.0f);
+	State.View = glm::lookAtLH(State.CameraPosition, State.CameraPosition + glm::vec3(0, 0, 1), glm::vec3(0, 1, 0));
 
 	// Initialize camera orientation
 	State.CameraYaw = 0.0f;
@@ -982,7 +1035,7 @@ RE_API auto GameUpdateAndRender(FGameMemory& Memory, f32 DeltaTime, FOffscreenBu
 		auto* DepthAttachment = State.DrawableRenderPass->depthAttachment();
 		DepthAttachment->setTexture(State.DepthTexture);
 
-		State.Projection = glm::perspectiveFov(glm::radians(State.FOV), (f32)State.Width, (f32)State.Height, 0.01f * s_UnitsInMeter, 1000.0f * s_UnitsInMeter);
+		State.Projection = glm::perspectiveFov(glm::radians(State.FOV), (f32)State.Width, (f32)State.Height, 0.01f, 1000.0f);
 	}
 	// Player movement is handled by PlayerController module
 	PlayerCtrl::Update(State.PhysicsSystem, State.PlayerCapsuleID, Gamepad, DeltaTime, State.CameraYaw);
@@ -1055,10 +1108,14 @@ RE_API auto GameUpdateAndRender(FGameMemory& Memory, f32 DeltaTime, FOffscreenBu
 		// Snap camera instantly to desired position (no momentum) to avoid interpolation jitter
 		State.CameraPosition = DesiredCam;
 		auto LookAtPosition = State.Player->Position + glm::vec3(-0.25f, 1.25f, 0.0f);
-		State.View = glm::lookAtLH(State.CameraPosition * s_UnitsInMeter, LookAtPosition * s_UnitsInMeter, glm::vec3(0, 1, 0));
+		State.View = glm::lookAtLH(State.CameraPosition, LookAtPosition, glm::vec3(0, 1, 0));
 	}
 
 	State.Capsule->Position = State.Player->Position + glm::vec3(0.0f, 0.875f, 0.0f);
+	{
+		auto& Transform = State.MeshTransforms[0];
+		Transform.Position = State.Player->Position;
+	}
 
 	MTL4::CommandBuffer* Cmd = State.Device->newCommandBuffer();
 	Cmd->beginCommandBuffer(State.Allocator.get());
@@ -1084,20 +1141,19 @@ RE_API auto GameUpdateAndRender(FGameMemory& Memory, f32 DeltaTime, FOffscreenBu
 		Encoder->setRenderPipelineState(State.Pipeline.get());
 		Encoder->setDepthStencilState(State.DepthStencilState);
 
-		for (auto& Mesh : State.Meshes)
+		for (u32 Idx = 0; Idx < State.MeshRenderers.size(); Idx++)
 		{
-			auto Model = glm::translate(glm::mat4(1), Mesh.Position * s_UnitsInMeter)
-				* glm::rotate(glm::mat4(1), glm::radians(Mesh.Rotation.y), glm::vec3(0.0f, 1.0f, 0.0f))
-				* glm::rotate(glm::mat4(1), glm::radians(Mesh.Rotation.x), glm::vec3(1.0f, 0.0f, 0.0f));
+			auto& Transform = State.MeshTransforms[Idx];
+			auto& Render = State.MeshRenderers[Idx];
 
-			auto MeshUniform = static_cast<Engine::Mesh::FMeshUniform*>(Mesh.Render.UniformBuffer->contents());
+			auto MeshUniform = static_cast<Engine::Mesh::FMeshUniform*>(Render.UniformBuffer->contents());
 			MeshUniform->ViewProj = State.Projection * State.View;
-			MeshUniform->Model = Model;
+			MeshUniform->Model = Engine::Transform::ToMatrix(Transform);
 
-			Cmd->useResidencySet(Mesh.Render.ResidencySet.get());
-			Encoder->setArgumentTable(Mesh.Render.ArgTableVert.get(), MTL::RenderStageVertex);
+			Cmd->useResidencySet(Render.ResidencySet.get());
+			Encoder->setArgumentTable(Render.ArgTableVert.get(), MTL::RenderStageVertex);
 
-			for (auto& Sub : Mesh.Render.Submeshes)
+			for (auto& Sub : Render.Submeshes)
 			{
 				Sub.ArgTableFrag->setSamplerState(State.Sampler->gpuResourceID(), 0);
 				Sub.ArgTableFrag->setAddress(State.MaterialBuffer->gpuAddress(), 0);
@@ -1112,7 +1168,7 @@ RE_API auto GameUpdateAndRender(FGameMemory& Memory, f32 DeltaTime, FOffscreenBu
 
 		Encoder->setRenderPipelineState(State.SkPipeline.get());
 		{
-			auto Model = glm::translate(glm::mat4(1), State.SkMesh.Position * s_UnitsInMeter)
+			auto Model = glm::translate(glm::mat4(1), State.SkMesh.Position)
 				* glm::rotate(glm::mat4(1), glm::radians(State.SkMesh.Rotation.y), glm::vec3(0.0f, 1.0f, 0.0f))
 				* glm::rotate(glm::mat4(1), glm::radians(State.SkMesh.Rotation.x), glm::vec3(1.0f, 0.0f, 0.0f));
 

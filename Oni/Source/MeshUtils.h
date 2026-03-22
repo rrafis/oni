@@ -169,6 +169,7 @@ namespace Engine::Mesh
 
 	namespace Metal
 	{
+		auto ProcessMeshData(MTL::Device* Device, const Mesh::FMeshData& MeshData, std::unordered_map<std::string, u32>& MaterialMap) -> FMeshRenderer;
 		auto ProcessMeshData(MTL::Device* Device, const struct MDLIO::FMeshData& MeshData, u32 MaterialIndexOffset = 0) -> FMeshRenderer;
 		auto ProcessSkeletalMeshData(MTL::Device* Device, const MDLIO::FSkMeshData& MeshData, u32 MaterialIndexOffset) -> FSkMeshRenderer;
 	} // namespace Metal
@@ -180,6 +181,10 @@ namespace Engine::Mesh
 
 		auto LoadMesh(MTL::Device* Device, void* Data) -> std::vector<Mesh::FMeshData>;
 		auto LoadMaterial(MTL::Device* Device, void* Data) -> std::vector<Mesh::FMaterial>;
+
+		auto LoadSphere(const std::string& Name, MTL::Device* Device, f32 Radius, u32 Segmentes) -> Mesh::FMeshData;
+		auto LoadBox(const std::string& Name, MTL::Device* Device, glm::vec3 Extent, glm::uvec3 Segmentes) -> Mesh::FMeshData;
+		auto LoadCapsule(const std::string& Name, MTL::Device* Device, glm::vec3 Extent, glm::uvec3 Segmentes) -> Mesh::FMeshData;
 	} // namespace mdl
 
 	namespace gltf
@@ -191,8 +196,4 @@ namespace Engine::Mesh
 		auto LoadSkeleton(cgltf_data* Data) -> std::vector<Mesh::FSkeleton>;
 		auto LoadMaterial(cgltf_data* Data) -> std::vector<Mesh::FMaterial>;
 	} // namespace gltf
-
-	auto GenerateSphere(const std::string& Name, f32 Radius, u32 Segmentes) -> FMeshData;
-	auto GenerateBox(const std::string& Name, glm::vec3 Extent, glm::uvec3 Segmentes) -> FMeshData;
-	auto GenerateCapsule(const std::string& Name, glm::vec3 Extent, glm::uvec3 Segmentes) -> FMeshData;
 } // namespace Engine::Mesh
