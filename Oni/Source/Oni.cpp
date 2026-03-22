@@ -2,12 +2,7 @@
 
 #include <memory>
 
-#define GLM_FORCE_RADIANS
-#define GLM_FORCE_DEPTH_ZERO_TO_ONE
-#define GLM_FORCE_LEFT_HANDED
-#include <glm/ext/matrix_clip_space.hpp>
-#include <glm/ext/matrix_transform.hpp>
-#include <glm/glm.hpp>
+#include "Types.h"
 
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
@@ -283,6 +278,12 @@ struct FGameState
 	FMesh* Capsule;
 	std::vector<FMesh> Meshes;
 	FSkeletalMesh SkMesh;
+
+	std::vector<Engine::Mesh::FMeshData> NewMeshes;
+	std::vector<Engine::Mesh::FSkeleton> NewSkeletons;
+	std::vector<Engine::Mesh::FMaterial> NewMaterials;
+	std::unordered_map<std::string, u32> SkeletonMap;
+	std::unordered_map<std::string, u32> MaterialMap;
 
 	glm::vec3 CameraPosition;
 
@@ -613,6 +614,75 @@ RE_API auto GameInitialize(FGameMemory& Memory) -> void
 	State.MaxFramesInFlight = 3;
 
 	State.CameraPosition = glm::vec3(0.0f, 0.0f, 0.0f);
+
+	// Setup a defualt material
+	{
+		auto& mat = State.NewMaterials.emplace_back(Engine::Mesh::FMaterial{ .Name = "Defulat" });
+		State.MaterialMap[mat.Name] = State.NewMaterials.size() - 1;
+	}
+
+	{
+		auto LoadPath = std::filesystem::path() / ContentPath / "meshes" / "Woman.gltf";
+		auto data = Engine::Mesh::gltf::LoadData(LoadPath.c_str());
+		auto Meshes = Engine::Mesh::gltf::LoadMesh(data);
+		auto Skeletons = Engine::Mesh::gltf::LoadSkeleton(data);
+		auto Materials = Engine::Mesh::gltf::LoadMaterial(data);
+		Engine::Mesh::gltf::FreeData(data);
+
+		for (auto& Mesh : Meshes)
+		{
+			State.NewMeshes.emplace_back(Mesh);
+		}
+
+		u32 Offset = State.SkeletonMap.size();
+		for (u32 Idx = 0; Idx < Skeletons.size(); Idx++)
+		{
+			auto& sk = State.NewSkeletons.emplace_back(Skeletons[Idx]);
+			State.SkeletonMap[sk.Name] = Offset + Idx;
+		}
+
+		Offset = State.MaterialMap.size();
+		for (u32 Idx = 0; Idx < Materials.size(); Idx++)
+		{
+			auto& mat = State.NewMaterials.emplace_back(Materials[Idx]);
+			State.MaterialMap[mat.Name] = Offset + Idx;
+		}
+	}
+
+	{
+		auto LoadPath = std::filesystem::path() / ContentPath / "meshes" / "DamagedHelmet.glb";
+		auto data = Engine::Mesh::gltf::LoadData(LoadPath.c_str());
+		auto Meshes = Engine::Mesh::gltf::LoadMesh(data);
+		auto Skeletons = Engine::Mesh::gltf::LoadSkeleton(data);
+		auto Materials = Engine::Mesh::gltf::LoadMaterial(data);
+		Engine::Mesh::gltf::FreeData(data);
+
+		for (auto& Mesh : Meshes)
+		{
+			State.NewMeshes.emplace_back(Mesh);
+		}
+
+		u32 Offset = State.SkeletonMap.size();
+		for (u32 Idx = 0; Idx < Skeletons.size(); Idx++)
+		{
+			auto& sk = State.NewSkeletons.emplace_back(Skeletons[Idx]);
+			State.SkeletonMap[sk.Name] = Offset + Idx;
+		}
+
+		Offset = State.MaterialMap.size();
+		for (u32 Idx = 0; Idx < Materials.size(); Idx++)
+		{
+			auto& mat = State.NewMaterials.emplace_back(Materials[Idx]);
+			State.MaterialMap[mat.Name] = Offset + Idx;
+		}
+	}
+
+	// Generate test meshes
+	{
+		State.NewMeshes.emplace_back(Engine::Mesh::GenerateBox("TestBox", glm::vec3(10.0f, 1.0f, 10.f) * s_UnitsInMeter, glm::uvec3(1, 1, 1)));
+		State.NewMeshes.emplace_back(Engine::Mesh::GenerateCapsule("TestCapsule", glm::vec3(0.25f, 1.75f, 0.25f) * s_UnitsInMeter, glm::uvec3(12, 4, 6)));
+		State.NewMeshes.emplace_back(Engine::Mesh::GenerateSphere("TestSphere", 1.0f * s_UnitsInMeter, 12));
+	}
 
 	State.Meshes.emplace_back();
 	State.Meshes[0].Position = glm::vec3(0.0f, 0.0f, 0.0f);

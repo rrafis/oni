@@ -22,6 +22,8 @@ project "Oni"
 		}
 	filter {}
 
+	linkCgltf()
+
 	externalincludedirs {
 		"%{wks.location}/ThirdParty/entt/src",
 		"%{wks.location}/ThirdParty/glm",

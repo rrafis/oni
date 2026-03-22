@@ -7,3 +7,6 @@
 [submodule "ThirdParty/Jolt/JoltPhysics"]
 	path = ThirdParty/Jolt/JoltPhysics
 	url = git@github.com:jrouwe/JoltPhysics.git
+[submodule "ThirdParty/cgltf/cgltf"]
+	path = ThirdParty/cgltf/cgltf
+	url = https://github.com/jkuhlmann/cgltf.git

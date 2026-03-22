@@ -1,10 +1,10 @@
 #pragma once
 
-#include <Platform.h>
+#include "Types.h"
 
 #include <Metal/Metal.hpp>
 
-#include <glm/glm.hpp>
+#include <cgltf.h>
 
 namespace Engine::Mesh
 {
@@ -39,18 +39,6 @@ namespace Engine::Mesh
 		UShort2,
 		UShort4,
 		Invalid,
-	};
-
-	enum class EPrimitiveType : u8
-	{
-		Triangles,
-		Lines
-	};
-
-	enum class EIndexType : u8
-	{
-		UInt16,
-		UInt32
 	};
 
 	struct alignas(16) FMeshUniform
@@ -163,14 +151,14 @@ namespace Engine::Mesh
 		{
 			FVertexStream SkinVertexStream;
 		};
-    
-        struct FSkMeshData
-        {
-            std::vector<FSkeletalMeshData> Meshes;
-            std::vector<glm::mat4> RestTransforms;
-            std::vector<glm::mat4> BindTransforms;
-            std::vector<std::string> JointNames;
-        };
+
+		struct FSkMeshData
+		{
+			std::vector<FSkeletalMeshData> Meshes;
+			std::vector<glm::mat4> RestTransforms;
+			std::vector<glm::mat4> BindTransforms;
+			std::vector<std::string> JointNames;
+		};
 
 		auto ExportSphere(MTL::Device* Device, f32 Radius, u32 Segmentes) -> FMeshData;
 		auto ExportBox(MTL::Device* Device, glm::vec3 Extent, glm::uvec3 Segmentes) -> FMeshData;
@@ -184,4 +172,18 @@ namespace Engine::Mesh
 		auto ProcessMeshData(MTL::Device* Device, const struct MDLIO::FMeshData& MeshData, u32 MaterialIndexOffset = 0) -> FMeshRenderer;
 		auto ProcessSkeletalMeshData(MTL::Device* Device, const MDLIO::FSkMeshData& MeshData, u32 MaterialIndexOffset) -> FSkMeshRenderer;
 	} // namespace Metal
+
+	namespace gltf
+	{
+		auto LoadData(const char* Path) -> cgltf_data*;
+		auto FreeData(cgltf_data* Data) -> void;
+
+		auto LoadMesh(cgltf_data* Data) -> std::vector<Mesh::FMeshData>;
+		auto LoadSkeleton(cgltf_data* Data) -> std::vector<Mesh::FSkeleton>;
+		auto LoadMaterial(cgltf_data* Data) -> std::vector<Mesh::FMaterial>;
+	} // namespace gltf
+
+	auto GenerateSphere(const std::string& Name, f32 Radius, u32 Segmentes) -> FMeshData;
+	auto GenerateBox(const std::string& Name, glm::vec3 Extent, glm::uvec3 Segmentes) -> FMeshData;
+	auto GenerateCapsule(const std::string& Name, glm::vec3 Extent, glm::uvec3 Segmentes) -> FMeshData;
 } // namespace Engine::Mesh

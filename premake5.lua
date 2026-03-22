@@ -55,6 +55,7 @@ workspace "RE"
 		}
 	filter {}
 
+include "ThirdParty/cgltf/cgltf.premake5.lua"
 include "ThirdParty/Jolt/Jolt.premake5.lua"
 
 include "Engine/premake5.lua"
