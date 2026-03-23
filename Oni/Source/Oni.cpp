@@ -222,26 +222,6 @@ namespace ph
 
 } // namespace ph
 
-struct FMesh
-{
-	Engine::Mesh::FMeshRenderer Render;
-	glm::vec3 Position;
-	glm::vec3 Rotation;
-	glm::vec3 Velocity;
-	f32 PlayerAccelerationRate;
-	f32 PlayerFrictionCoeficient;
-};
-
-struct FSkeletalMesh
-{
-	Engine::Mesh::FSkMeshRenderer Render;
-	glm::vec3 Position;
-	glm::vec3 Rotation;
-	glm::vec3 Velocity;
-	f32 PlayerAccelerationRate;
-	f32 PlayerFrictionCoeficient;
-};
-
 struct FGameState
 {
 	MTL::Device* Device;
@@ -272,10 +252,8 @@ struct FGameState
 	u64 MaxFramesInFlight;
 	u64 Frame;
 
-	FMesh* Player;
-	FMesh* Capsule;
-	std::vector<FMesh> Meshes;
-	FSkeletalMesh SkMesh;
+	Engine::FTransform* Player;
+	Engine::FTransform* Capsule;
 
 	std::vector<Engine::Mesh::FMeshData> NewMeshes;
 	std::vector<Engine::Mesh::FSkeleton> NewSkeletons;
@@ -283,7 +261,10 @@ struct FGameState
 	std::unordered_map<std::string, u32> SkeletonMap;
 	std::unordered_map<std::string, u32> MaterialMap;
 
+	std::vector<Engine::Mesh::FSkinnedMeshRenderer> SkinnedMeshRenderers;
+	std::vector<Engine::Mesh::FSkeletonRenderData> SkeletonRenderers;
 	std::vector<Engine::Mesh::FMeshRenderer> MeshRenderers;
+	std::vector<Engine::FTransform> SkinnedMeshTransforms;
 	std::vector<Engine::FTransform> MeshTransforms;
 
 	glm::vec3 CameraPosition;
@@ -415,8 +396,87 @@ auto CreateDummyTexture(FGameState& State, const char* Name = "Dummy") -> MTL::R
 	return CreateTexture(State, State.Device, RawTexture, Name, false);
 }
 
-auto LoadMesh2(FGameState& State, MTL::Device* Device, std::vector<Engine::Mesh::FMeshData> Meshes, std::vector<Engine::Mesh::FMaterial> Materials = {},
-	const char* RootPath = nullptr, std::vector<Engine::Mesh::FSkeleton> Skeletons = {}) -> std::vector<Engine::Mesh::FMeshRenderer>
+auto LoadMesh(FGameState& State, MTL::Device* Device, std::vector<Engine::Mesh::FMeshData> Meshes, std::vector<Engine::Mesh::FMaterial> Materials = {},
+	const char* RootPath = nullptr) -> std::vector<Engine::Mesh::FMeshRenderer>
+{
+	for (auto& Mesh : Meshes)
+	{
+		State.NewMeshes.emplace_back(Mesh);
+	}
+
+	u32 Offset = State.MaterialMap.size();
+	for (u32 Idx = 0; Idx < Materials.size(); Idx++)
+	{
+		auto& mat = State.NewMaterials.emplace_back(Materials[Idx]);
+
+		Engine::Mesh::FRenderMaterial RenderMat;
+		RenderMat.BaseColorFactor = mat.BaseColorFactor;
+		RenderMat.EmissiveFactor = mat.EmissiveFactor;
+		RenderMat.MetallicFactor = mat.MetallicFactor;
+		RenderMat.RoughnessFactor = mat.RoughnessFactor;
+
+		if (mat.BaseColorTex.size() > 0)
+			RenderMat.BaseColorTex = LoadTexture(State, RootPath, mat.BaseColorTex.data());
+		else
+			RenderMat.BaseColorTex = State.DummyTexture;
+
+		if (mat.MetallicRoughnessTex.size() > 0)
+			RenderMat.MetallicRoughnessTex = LoadTexture(State, RootPath, mat.MetallicRoughnessTex.data());
+
+		if (mat.NormalTex.size() > 0)
+			RenderMat.NormalTex = LoadTexture(State, RootPath, mat.NormalTex.data());
+
+		if (mat.EmissiveTex.size() > 0)
+			RenderMat.EmissiveTex = LoadTexture(State, RootPath, mat.EmissiveTex.data());
+
+		if (mat.OcclusionTex.size() > 0)
+			RenderMat.OcclusionTex = LoadTexture(State, RootPath, mat.OcclusionTex.data());
+
+		State.Materials.emplace_back(RenderMat);
+
+		State.MaterialMap[mat.Name] = Offset + Idx;
+	}
+
+	std::vector<Engine::Mesh::FMeshRenderer> Result;
+	for (auto& MeshData : Meshes)
+	{
+		Result.emplace_back(Engine::Mesh::Metal::ProcessMeshData(Device, MeshData, State.MaterialMap));
+	}
+
+	return Result;
+}
+
+auto LoadMesh(FGameState& State, MTL::Device* Device, const char* RootPath, const char* Name) -> std::vector<Engine::Mesh::FMeshRenderer>
+{
+	auto LoadPath = std::filesystem::path() / ContentPath / RootPath / Name;
+	auto ext = LoadPath.extension();
+	if (!LoadPath.has_extension())
+	{
+		return {};
+	}
+
+	std::vector<Engine::Mesh::FMeshData> Meshes;
+	std::vector<Engine::Mesh::FMaterial> Materials;
+	if (LoadPath.extension() == ".gltf" || LoadPath.extension() == ".glb")
+	{
+		auto Data = Engine::Mesh::gltf::LoadData(LoadPath.c_str());
+		Meshes = Engine::Mesh::gltf::LoadMesh(Data);
+		Materials = Engine::Mesh::gltf::LoadMaterial(Data);
+		Engine::Mesh::gltf::FreeData(Data);
+	}
+	else
+	{
+		auto Data = Engine::Mesh::mdl::LoadData(Device, LoadPath.c_str());
+		Meshes = Engine::Mesh::mdl::LoadMesh(Device, Data);
+		Materials = Engine::Mesh::mdl::LoadMaterial(Device, Data);
+		Engine::Mesh::mdl::FreeData(Data);
+	}
+
+	return LoadMesh(State, Device, Meshes, Materials, RootPath);
+}
+
+auto LoadMeshSkinned(FGameState& State, MTL::Device* Device, std::vector<Engine::Mesh::FMeshData> Meshes, std::vector<Engine::Mesh::FMaterial> Materials = {},
+	const char* RootPath = nullptr, std::vector<Engine::Mesh::FSkeleton> Skeletons = {}) -> std::vector<Engine::Mesh::FSkinnedMeshRenderer>
 {
 	for (auto& Mesh : Meshes)
 	{
@@ -463,16 +523,21 @@ auto LoadMesh2(FGameState& State, MTL::Device* Device, std::vector<Engine::Mesh:
 		State.MaterialMap[mat.Name] = Offset + Idx;
 	}
 
-	std::vector<Engine::Mesh::FMeshRenderer> Result;
+	for (auto& Sk : Skeletons)
+	{
+		State.SkeletonRenderers.emplace_back(Engine::Mesh::Metal::ProcessSkeleton(Device, Sk));
+	}
+
+	std::vector<Engine::Mesh::FSkinnedMeshRenderer> Result;
 	for (auto& MeshData : Meshes)
 	{
-		Result.emplace_back(Engine::Mesh::Metal::ProcessMeshData(Device, MeshData, State.MaterialMap));
+		Result.emplace_back(
+			Engine::Mesh::Metal::ProcessMeshData(Device, MeshData, State.MaterialMap, State.SkeletonRenderers[State.SkeletonMap[MeshData.SkeletonName]]));
 	}
 
 	return Result;
 }
-
-auto LoadMesh2(FGameState& State, MTL::Device* Device, const char* RootPath, const char* Name) -> std::vector<Engine::Mesh::FMeshRenderer>
+auto LoadMeshSkinned(FGameState& State, MTL::Device* Device, const char* RootPath, const char* Name) -> std::vector<Engine::Mesh::FSkinnedMeshRenderer>
 {
 	auto LoadPath = std::filesystem::path() / ContentPath / RootPath / Name;
 	auto ext = LoadPath.extension();
@@ -492,157 +557,8 @@ auto LoadMesh2(FGameState& State, MTL::Device* Device, const char* RootPath, con
 		Materials = Engine::Mesh::gltf::LoadMaterial(Data);
 		Engine::Mesh::gltf::FreeData(Data);
 	}
-	else
-	{
-		auto Data = Engine::Mesh::mdl::LoadData(Device, LoadPath.c_str());
-		Meshes = Engine::Mesh::mdl::LoadMesh(Device, Data);
-		Materials = Engine::Mesh::mdl::LoadMaterial(Device, Data);
-		Engine::Mesh::mdl::FreeData(Data);
-	}
 
-	return LoadMesh2(State, Device, Meshes, Materials, RootPath, Skeletons);
-}
-
-auto LoadMesh(FGameState& State, MTL::Device* Device, const char* RootPath, const char* Name) -> Engine::Mesh::FMeshRenderer
-{
-	auto LoadPath = std::filesystem::path() / ContentPath / RootPath / Name;
-	auto Mesh = Engine::Mesh::MDLIO::ExportMeshFromPath(Device, LoadPath.c_str());
-
-	// HACK: Make stornger references for material index
-	auto MaterailIndexOffset = State.Materials.size();
-	auto Result = Engine::Mesh::Metal::ProcessMeshData(Device, Mesh, MaterailIndexOffset);
-
-	for (auto& Material : Mesh.Materials)
-	{
-		Engine::Mesh::FRenderMaterial RenderMat;
-		RenderMat.BaseColorFactor = Material.BaseColorFactor;
-		RenderMat.EmissiveFactor = Material.EmissiveFactor;
-		RenderMat.MetallicFactor = Material.MetallicFactor;
-		RenderMat.RoughnessFactor = Material.RoughnessFactor;
-
-		if (Material.BaseColorTex.size() > 0)
-			RenderMat.BaseColorTex = LoadTexture(State, RootPath, Material.BaseColorTex.data());
-		else
-			RenderMat.BaseColorTex = State.DummyTexture;
-
-		if (Material.MetallicRoughnessTex.size() > 0)
-			RenderMat.MetallicRoughnessTex = LoadTexture(State, RootPath, Material.MetallicRoughnessTex.data());
-
-		if (Material.NormalTex.size() > 0)
-			RenderMat.NormalTex = LoadTexture(State, RootPath, Material.NormalTex.data());
-
-		if (Material.EmissiveTex.size() > 0)
-			RenderMat.EmissiveTex = LoadTexture(State, RootPath, Material.EmissiveTex.data());
-
-		if (Material.OcclusionTex.size() > 0)
-			RenderMat.OcclusionTex = LoadTexture(State, RootPath, Material.OcclusionTex.data());
-
-		State.Materials.emplace_back(RenderMat);
-	}
-
-	return Result;
-}
-
-auto LoadSkeletalMesh(FGameState& State, MTL::Device* Device, const char* RootPath, const char* Name) -> Engine::Mesh::FSkMeshRenderer
-{
-	auto LoadPath = std::filesystem::path() / ContentPath / RootPath / Name;
-	auto MeshData = Engine::Mesh::MDLIO::ExportSkeletalMeshFromPath(Device, LoadPath.c_str());
-
-	// HACK: Make stornger references for material index
-	auto MaterailIndexOffset = State.Materials.size();
-	Engine::Mesh::FSkMeshRenderer Result = Engine::Mesh::Metal::ProcessSkeletalMeshData(Device, MeshData, MaterailIndexOffset);
-	for (auto& Mesh : MeshData.Meshes)
-	{
-		for (auto& Material : Mesh.Materials)
-		{
-			Engine::Mesh::FRenderMaterial RenderMat;
-			RenderMat.BaseColorFactor = Material.BaseColorFactor;
-			RenderMat.EmissiveFactor = Material.EmissiveFactor;
-			RenderMat.MetallicFactor = Material.MetallicFactor;
-			RenderMat.RoughnessFactor = Material.RoughnessFactor;
-
-			if (Material.BaseColorTex.size() > 0)
-				RenderMat.BaseColorTex = LoadTexture(State, RootPath, Material.BaseColorTex.data());
-			else
-				RenderMat.BaseColorTex = State.DummyTexture;
-
-			if (Material.MetallicRoughnessTex.size() > 0)
-				RenderMat.MetallicRoughnessTex = LoadTexture(State, RootPath, Material.MetallicRoughnessTex.data());
-
-			if (Material.NormalTex.size() > 0)
-				RenderMat.NormalTex = LoadTexture(State, RootPath, Material.NormalTex.data());
-
-			if (Material.EmissiveTex.size() > 0)
-				RenderMat.EmissiveTex = LoadTexture(State, RootPath, Material.EmissiveTex.data());
-
-			if (Material.OcclusionTex.size() > 0)
-				RenderMat.OcclusionTex = LoadTexture(State, RootPath, Material.OcclusionTex.data());
-
-			State.Materials.emplace_back(RenderMat);
-		}
-	}
-
-	return Result;
-}
-
-auto LoadBox(FGameState& State, MTL::Device* Device, glm::vec3 Extent, glm::uvec3 Segments) -> Engine::Mesh::FMeshRenderer
-{
-	auto Mesh = Engine::Mesh::MDLIO::ExportBox(Device, Extent, Segments);
-	// HACK: Make stornger references for material index
-	auto MaterailIndexOffset = State.Materials.size();
-	auto Result = Engine::Mesh::Metal::ProcessMeshData(Device, Mesh, MaterailIndexOffset);
-
-	for (auto& Submesh : Result.Submeshes)
-	{
-		Submesh.bWireframe = true;
-	}
-
-	for (auto& Material : Mesh.Materials)
-	{
-		Engine::Mesh::FRenderMaterial RenderMat;
-		RenderMat.BaseColorFactor = Material.BaseColorFactor;
-		RenderMat.EmissiveFactor = Material.EmissiveFactor;
-		RenderMat.MetallicFactor = Material.MetallicFactor;
-		RenderMat.RoughnessFactor = Material.RoughnessFactor;
-		RenderMat.BaseColorTex = State.DummyTexture;
-		RenderMat.MetallicRoughnessTex = State.DummyTexture;
-		RenderMat.NormalTex = State.DummyTexture;
-		RenderMat.EmissiveTex = State.DummyTexture;
-		RenderMat.OcclusionTex = State.DummyTexture;
-		State.Materials.emplace_back(RenderMat);
-	}
-
-	return Result;
-}
-
-auto LoadCapsule(FGameState& State, MTL::Device* Device, glm::vec3 Extent, glm::uvec3 Segments) -> Engine::Mesh::FMeshRenderer
-{
-	auto Mesh = Engine::Mesh::MDLIO::ExportCapsule(Device, Extent, Segments);
-	// HACK: Make stornger references for material index
-	auto MaterailIndexOffset = State.Materials.size();
-	auto Result = Engine::Mesh::Metal::ProcessMeshData(Device, Mesh, MaterailIndexOffset);
-
-	for (auto& Submesh : Result.Submeshes)
-	{
-		Submesh.bWireframe = true;
-	}
-
-	for (auto& Material : Mesh.Materials)
-	{
-		Engine::Mesh::FRenderMaterial RenderMat;
-		RenderMat.BaseColorFactor = Material.BaseColorFactor;
-		RenderMat.EmissiveFactor = Material.EmissiveFactor;
-		RenderMat.MetallicFactor = Material.MetallicFactor;
-		RenderMat.RoughnessFactor = Material.RoughnessFactor;
-		RenderMat.BaseColorTex = State.DummyTexture;
-		RenderMat.MetallicRoughnessTex = State.DummyTexture;
-		RenderMat.NormalTex = State.DummyTexture;
-		RenderMat.EmissiveTex = State.DummyTexture;
-		RenderMat.OcclusionTex = State.DummyTexture;
-		State.Materials.emplace_back(RenderMat);
-	}
-
-	return Result;
+	return LoadMeshSkinned(State, Device, Meshes, Materials, RootPath, Skeletons);
 }
 
 static FGameSurfaceDesc Props;
@@ -718,7 +634,7 @@ RE_API auto GameInitialize(FGameMemory& Memory) -> void
 	}
 
 	{
-		auto Meshes = LoadMesh2(State, State.Device, "meshes/samanosuke_future", "Future_Samanosuke.obj");
+		auto Meshes = LoadMesh(State, State.Device, "meshes/samanosuke_future", "Future_Samanosuke.obj");
 		for (auto& Mesh : Meshes)
 		{
 			State.MeshRenderers.emplace_back(Mesh);
@@ -729,7 +645,7 @@ RE_API auto GameInitialize(FGameMemory& Memory) -> void
 	}
 
 	{
-		auto Meshes = LoadMesh2(State, State.Device, "meshes/samanosuke_weapons", "Tensou_lvl_3.obj");
+		auto Meshes = LoadMesh(State, State.Device, "meshes/samanosuke_weapons", "Tensou_lvl_3.obj");
 		for (auto& Mesh : Meshes)
 		{
 			State.MeshRenderers.emplace_back(Mesh);
@@ -740,7 +656,7 @@ RE_API auto GameInitialize(FGameMemory& Memory) -> void
 
 	{
 		auto Box = Engine::Mesh::mdl::LoadBox("Test Box", State.Device, glm::vec3(100.0f, 1.0f, 100.f), glm::uvec3(10, 1, 10));
-		auto Meshes = LoadMesh2(State, State.Device, { Box });
+		auto Meshes = LoadMesh(State, State.Device, { Box });
 		for (auto& Mesh : Meshes)
 		{
 			auto& Render = State.MeshRenderers.emplace_back(Mesh);
@@ -751,7 +667,7 @@ RE_API auto GameInitialize(FGameMemory& Memory) -> void
 
 	{
 		auto Capsule = Engine::Mesh::mdl::LoadCapsule("Test Capsule", State.Device, glm::vec3(0.25f, 1.75f, 0.25f), glm::uvec3(12, 4, 6));
-		auto Meshes = LoadMesh2(State, State.Device, { Capsule });
+		auto Meshes = LoadMesh(State, State.Device, { Capsule });
 		for (auto& Mesh : Meshes)
 		{
 			auto& Render = State.MeshRenderers.emplace_back(Mesh);
@@ -760,29 +676,19 @@ RE_API auto GameInitialize(FGameMemory& Memory) -> void
 		}
 	}
 
-	State.Meshes.emplace_back();
-	State.Meshes[0].Position = glm::vec3(0.0f, 0.0f, 0.0f);
-	State.Meshes[0].Rotation.x = -90.f;
-	State.Meshes[0].Render = LoadMesh(State, State.Device, "meshes/samanosuke_future", "Future_Samanosuke.obj");
-	State.Meshes.emplace_back();
-	State.Meshes[1].Position = glm::vec3(0.0f, 0.0f, 0.0f);
-	State.Meshes[1].Rotation.x = -90.f;
-	State.Meshes[1].Render = LoadMesh(State, State.Device, "meshes/samanosuke_weapons", "Tensou_lvl_3.obj");
-	State.Meshes.emplace_back();
-	State.Meshes[2].Position = glm::vec3(0.0f, -0.5f, 0.0f);
-	State.Meshes[2].Render = LoadBox(State, State.Device, glm::vec3(100.0f, 1.0f, 100.0f), glm::uvec3(10, 1, 10));
-	State.Meshes.emplace_back();
-	State.Meshes[3].Position = glm::vec3(0.0f, 0.875f, 0.0f);
-	State.Meshes[3].Render = LoadCapsule(State, State.Device, glm::vec3(0.25f, 1.75f, 0.25f), glm::uvec3(12, 4, 6));
+	{
+		auto Meshes = LoadMeshSkinned(State, State.Device, "meshes", "mannequiny-0.3.0.glb");
+		for (auto& Mesh : Meshes)
+		{
+			State.SkinnedMeshRenderers.emplace_back(Mesh);
+			State.SkinnedMeshTransforms.emplace_back(Engine::FTransform{ .Position = glm::vec3(0.0f, 0.0f, 0.0f),
+				.Rotation = glm::quat(glm::vec3(0.0f, glm::radians(-180.0f), 0.0f)),
+				.Scale = glm::vec3(1.0f / 30.0f) });
+		}
+	}
 
-	State.SkMesh.Position = glm::vec3(0.0f, 0.0f, 0.0f);
-	State.SkMesh.Rotation.y = -180.f;
-	State.SkMesh.Render = LoadSkeletalMesh(State, State.Device, "meshes", "mannequiny-0.3.0.usdz");
-
-	State.Player = &State.Meshes[0];
-	State.Capsule = &State.Meshes[3];
-	State.Player->PlayerAccelerationRate = 20.0f;
-	State.Player->PlayerFrictionCoeficient = 5.0f;
+	State.Player = &State.MeshTransforms[0];
+	State.Capsule = &State.MeshTransforms[3];
 	State.bWasJumpPressed = false;
 
 	// Initialize last rendered pos to current player position to avoid snap on first frame
@@ -1061,17 +967,16 @@ RE_API auto GameUpdateAndRender(FGameMemory& Memory, f32 DeltaTime, FOffscreenBu
 		const float TurnThreshold = 0.25f; // only rotate when moving sufficiently
 		if (speed > TurnThreshold)
 		{
-			float heading = atan2f(velXZ.x, velXZ.y); // angle relative to +Z
-			float headingDeg = glm::degrees(heading);
-			// Smoothly interpolate rotation yaw using shortest angular distance to avoid 360-degree flips
+			// Compute heading angle relative to +Z axis
+			float heading = atan2f(velXZ.x, velXZ.y);
+
+			// Build target quaternion (rotation around Y axis)
+			glm::quat targetRot = glm::angleAxis(heading, glm::vec3(0.0f, 1.0f, 0.0f));
+			glm::quat preserveRot = glm::quat(glm::vec3(glm::radians(-90.0f), 0.0f, 0.0f));
+
+			// Smoothly interpolate current rotation toward target
 			const float RotLerp = 0.18f;
-			float currentYaw = State.Player->Rotation.y;
-			float diff = headingDeg - currentYaw;
-			while (diff < -180.0f)
-				diff += 360.0f;
-			while (diff > 180.0f)
-				diff -= 360.0f;
-			State.Player->Rotation.y = currentYaw + diff * RotLerp;
+			State.Player->Rotation = glm::slerp(State.Player->Rotation, targetRot * preserveRot, RotLerp);
 		}
 	}
 
@@ -1167,30 +1072,29 @@ RE_API auto GameUpdateAndRender(FGameMemory& Memory, f32 DeltaTime, FOffscreenBu
 		}
 
 		Encoder->setRenderPipelineState(State.SkPipeline.get());
+
+		for (u32 Idx = 0; Idx < State.SkinnedMeshRenderers.size(); Idx++)
 		{
-			auto Model = glm::translate(glm::mat4(1), State.SkMesh.Position)
-				* glm::rotate(glm::mat4(1), glm::radians(State.SkMesh.Rotation.y), glm::vec3(0.0f, 1.0f, 0.0f))
-				* glm::rotate(glm::mat4(1), glm::radians(State.SkMesh.Rotation.x), glm::vec3(1.0f, 0.0f, 0.0f));
+			auto& Transform = State.SkinnedMeshTransforms[Idx];
+			auto& Render = State.SkinnedMeshRenderers[Idx];
 
-			for (auto& Mesh : State.SkMesh.Render.MeshRender)
+			auto MeshUniform = static_cast<Engine::Mesh::FMeshUniform*>(Render.UniformBuffer->contents());
+			MeshUniform->ViewProj = State.Projection * State.View;
+			MeshUniform->Model = Engine::Transform::ToMatrix(Transform);
+
+			Cmd->useResidencySet(Render.ResidencySet.get());
+			Encoder->setArgumentTable(Render.ArgTableVert.get(), MTL::RenderStageVertex);
+
+			for (auto& Sub : Render.Submeshes)
 			{
-				auto MeshUniform = static_cast<Engine::Mesh::FMeshUniform*>(Mesh.UniformBuffer->contents());
-				MeshUniform->ViewProj = State.Projection * State.View;
-				MeshUniform->Model = Model;
+				Sub.ArgTableFrag->setSamplerState(State.Sampler->gpuResourceID(), 0);
+				Sub.ArgTableFrag->setAddress(State.MaterialBuffer->gpuAddress(), 0);
+				Encoder->setArgumentTable(Sub.ArgTableFrag.get(), MTL::RenderStageFragment);
 
-				Cmd->useResidencySet(Mesh.ResidencySet.get());
-				Encoder->setArgumentTable(Mesh.ArgTableVert.get(), MTL::RenderStageVertex);
-				for (auto& Sub : Mesh.Submeshes)
-				{
-					Sub.ArgTableFrag->setSamplerState(State.Sampler->gpuResourceID(), 0);
-					Sub.ArgTableFrag->setAddress(State.MaterialBuffer->gpuAddress(), 0);
-					Encoder->setArgumentTable(Sub.ArgTableFrag.get(), MTL::RenderStageFragment);
-
-					Encoder->setTriangleFillMode(Sub.bWireframe ? MTL::TriangleFillModeLines : MTL::TriangleFillModeFill);
-					Encoder->setCullMode(Sub.bDoubleSided ? MTL::CullModeNone : MTL::CullModeBack);
-					Encoder->setFrontFacingWinding(Sub.bWindingOrderClockWise ? MTL::WindingClockwise : MTL::WindingCounterClockwise);
-					Encoder->drawIndexedPrimitives(MTL::PrimitiveTypeTriangle, Sub.IndexCount, Sub.IndexType, Sub.IbAddress, Sub.IbSize, 1);
-				}
+				Encoder->setTriangleFillMode(Sub.bWireframe ? MTL::TriangleFillModeLines : MTL::TriangleFillModeFill);
+				Encoder->setCullMode(Sub.bDoubleSided ? MTL::CullModeNone : MTL::CullModeBack);
+				Encoder->setFrontFacingWinding(Sub.bWindingOrderClockWise ? MTL::WindingClockwise : MTL::WindingCounterClockwise);
+				Encoder->drawIndexedPrimitives(MTL::PrimitiveTypeTriangle, Sub.IndexCount, Sub.IndexType, Sub.IbAddress, Sub.IbSize, 1);
 			}
 		}
 

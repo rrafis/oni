@@ -12,6 +12,7 @@
 #include <glm/ext/matrix_transform.hpp>
 #include <glm/ext/quaternion_float.hpp>
 #include <glm/glm.hpp>
+#include <glm/gtx/compatibility.hpp>
 #include <glm/gtx/dual_quaternion.hpp>
 #include <glm/gtx/matrix_decompose.hpp>
 #include <glm/gtx/quaternion.hpp>
@@ -19,17 +20,6 @@
 
 namespace glm
 {
-	template <typename T, qualifier Q>
-	GLM_FUNC_QUALIFIER GLM_CONSTEXPR glm::vec<3, T, Q> lerp(glm::vec<3, T, Q> const& x, glm::vec<3, T, Q> const& y, T a)
-	{
-		static_assert(std::numeric_limits<T>::is_iec559 || GLM_CONFIG_UNRESTRICTED_FLOAT, "'lerp' only accept floating-point inputs");
-
-		// Lerp is only defined in [0, 1]
-		assert(a >= static_cast<T>(0));
-		assert(a <= static_cast<T>(1));
-
-		return x * (static_cast<T>(1) - a) + (y * a);
-	}
 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR quat quat_identity()
 	{
 		return glm::quat_identity<f32, highp>();
@@ -62,6 +52,9 @@ namespace Engine
 		{
 			std::vector<FTransform> Joints;
 			std::vector<i32> Parents;
+
+			auto GetGlobaMatrix(u32 Joint) const -> glm::mat4;
+			auto GetMatrixPalette() const -> std::vector<glm::mat4>;
 		};
 
 		struct FTransformTrack

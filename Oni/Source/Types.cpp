@@ -1,5 +1,30 @@
 #include "Types.h"
 
+namespace Engine::Animation
+{
+	auto FPose::GetGlobaMatrix(u32 Joint) const -> glm::mat4
+	{
+		glm::mat4 Result = Transform::ToMatrix(Joints[Joint]);
+		for (int p = Parents[Joint]; p >= 0; p = Parents[p])
+		{
+			auto Parent = Transform::ToMatrix(Joints[p]);
+			Result = Parent * Result; // Apply parent transform
+		}
+		return Result;
+	}
+
+	auto FPose::GetMatrixPalette() const -> std::vector<glm::mat4>
+	{
+		std::vector<glm::mat4> Result;
+		Result.reserve(Joints.size());
+		for (u32 Ind = 0; Ind < Joints.size(); Ind++)
+		{
+			Result.emplace_back(GetGlobaMatrix(Ind));
+		}
+		return Result;
+	}
+} // namespace Engine::Animation
+
 namespace Engine::Transform
 {
 	auto Combine(const FTransform& Lhs, const FTransform& Rhs) -> FTransform

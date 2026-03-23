@@ -28,8 +28,12 @@ struct VertexIn
 	packed_float2 uv;
 };
 
-struct VertexSkin
+struct VertexSkinIn
 {
+	packed_float3 position;
+	packed_float3 normal;
+	packed_float3 tangent;
+	packed_float2 uv;
 	uint4 joints;
 	float4 weights;
 };
@@ -97,29 +101,25 @@ fragment float4 fragment_main(
 
 vertex VSOut vertex_sk_main(
 	uint vertexID [[vertex_id]],
-	constant VertexIn *vertexData [[buffer(0)]],
+	constant VertexSkinIn *vertexData [[buffer(0)]],
 	constant InstanceUniform& instance [[buffer(1)]],
-	constant VertexSkin *skinData [[buffer(2)]],
-	constant float4x4 *bind [[buffer(3)]],
-	constant float4x4 *pose [[buffer(4)]]
+	constant float4x4 *bind [[buffer(2)]],
+	constant float4x4 *pose [[buffer(3)]]
 ) {
-	VertexIn in = vertexData[vertexID];
-	VertexSkin skinIn = skinData[vertexID];
+	VertexSkinIn in = vertexData[vertexID];
 
 	float4x4 model = instance.model;
 	float3x3 model3x3 = float3x3(model[0].xyz, model[1].xyz, model[2].xyz);
 	float4x4 viewProj = instance.viewProj;
 
-	float4x4 skin = (pose[skinIn.joints.x] * bind[skinIn.joints.x]) * skinIn.weights.x
-				  + (pose[skinIn.joints.y] * bind[skinIn.joints.y]) * skinIn.weights.y
-				  + (pose[skinIn.joints.z] * bind[skinIn.joints.z]) * skinIn.weights.z
-				  + (pose[skinIn.joints.w] * bind[skinIn.joints.w]) * skinIn.weights.w;
-	skin = float4x4{
-		float4(30,0,0,0),
-		float4(0,30,0,0),
-		float4(0,0,30,0),
-		float4(0,0,0,1)
-	};
+	float4x4 skin = (pose[in.joints.x] * bind[in.joints.x]) * in.weights.x + (pose[in.joints.y] * bind[in.joints.y]) * in.weights.y
+				  + (pose[in.joints.z] * bind[in.joints.z]) * in.weights.z + (pose[in.joints.w] * bind[in.joints.w]) * in.weights.w;
+	// skin = float4x4{
+	// 	float4(30,0,0,0),
+	// 	float4(0,30,0,0),
+	// 	float4(0,0,30,0),
+	// 	float4(0,0,0,1)
+	// };
 	float3x3 normalSkin = transpose(inverse(float3x3(skin[0].xyz, skin[1].xyz, skin[2].xyz)));
 
 	float4 skinnedPos = skin * float4(in.position, 1.0);

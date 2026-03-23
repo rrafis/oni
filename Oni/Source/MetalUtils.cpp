@@ -154,93 +154,26 @@ namespace Engine::Mesh
 			return MeshRender;
 		}
 
-		auto ProcessMeshData(MTL::Device* Device, const MDLIO::FMeshData& MeshData, u32 MaterialIndexOffset) -> FMeshRenderer
+		auto ProcessSkeleton(MTL::Device* Device, const Mesh::FSkeleton& Skeleton) -> FSkeletonRenderData
 		{
-			FMeshRenderer MeshRender;
-			MeshRender.VertexBuffer =
-				NS::TransferPtr(Device->newBuffer(MeshData.VertexStream.Data.data(), MeshData.VertexStream.Data.size(), MTL::ResourceStorageModeShared));
-			MeshRender.UniformBuffer = NS::TransferPtr(Device->newBuffer(sizeof(Engine::Mesh::FMeshUniform), MTL::ResourceStorageModeShared));
-			MeshRender.MaterialIndexBuffer = NS::TransferPtr(Device->newBuffer(sizeof(u32) * MeshData.Submeshes.size(), MTL::ResourceStorageModeShared));
-
-			NS::Error* error;
-			NS::SharedPtr<MTL::ResidencySetDescriptor> ResSetDesc = NS::TransferPtr(MTL::ResidencySetDescriptor::alloc()->init());
-
-			ResSetDesc->setInitialCapacity(1 + 1 + MeshRender.Submeshes.size()); // Vertex buffer + uniform buffer + Index buffer for each submesh
-			MeshRender.ResidencySet = NS::TransferPtr(Device->newResidencySet(ResSetDesc.get(), &error));
-			if (!MeshRender.ResidencySet)
-			{
-				NS::String* desc = error->localizedDescription();
-				printf("Shader compile error: %s\n", desc->utf8String());
-			}
-
-			NS::SharedPtr<MTL4::ArgumentTableDescriptor> ArgTableVertDesc = NS::TransferPtr(MTL4::ArgumentTableDescriptor::alloc()->init());
-			ArgTableVertDesc->setMaxBufferBindCount(5);
-			ArgTableVertDesc->setMaxTextureBindCount(0);
-			ArgTableVertDesc->setMaxSamplerStateBindCount(0);
-			MeshRender.ArgTableVert = NS::TransferPtr(Device->newArgumentTable(ArgTableVertDesc.get(), &error));
-
-			MeshRender.ArgTableVert->setAddress(MeshRender.VertexBuffer->gpuAddress(), 0);
-			MeshRender.ArgTableVert->setAddress(MeshRender.UniformBuffer->gpuAddress(), 1);
-			MeshRender.ResidencySet->addAllocation(MeshRender.VertexBuffer.get());
-			MeshRender.ResidencySet->addAllocation(MeshRender.UniformBuffer.get());
-			MeshRender.ResidencySet->addAllocation(MeshRender.MaterialIndexBuffer.get());
-
-			NS::SharedPtr<MTL4::ArgumentTableDescriptor> ArgTableFragDesc = NS::TransferPtr(MTL4::ArgumentTableDescriptor::alloc()->init());
-			ArgTableFragDesc->setMaxBufferBindCount(2);
-			ArgTableFragDesc->setMaxTextureBindCount(0);
-			ArgTableFragDesc->setMaxSamplerStateBindCount(1);
-
-			u32 Idx = 0;
-			u32* MatIndex = static_cast<u32*>(MeshRender.MaterialIndexBuffer->contents());
-			for (auto& Submesh : MeshData.Submeshes)
-			{
-				MatIndex[Idx] = Submesh.MaterialIndex + MaterialIndexOffset;
-
-				FMeshRenderer::FSubmesh Sub;
-				Sub.IndexType = Engine::Mesh::Metal::MapIndexType(Submesh.IndexType);
-				Sub.IndexCount = Submesh.IndexCount;
-				Sub.IndexBuffer = NS::TransferPtr(Device->newBuffer(Submesh.Indices.data(), Submesh.Indices.size(), MTL::ResourceStorageModeShared));
-				Sub.bDoubleSided = true; // MeshData.Materials[Sub.MaterialIndex].DoubleSided;
-				Sub.bWindingOrderClockWise = true;
-
-				Sub.IbSize = Sub.IndexCount * (sizeof(u16) * (u32)(Sub.IndexType + 1));
-				Sub.IbAddress = Sub.IndexBuffer->gpuAddress();
-
-				Sub.ArgTableFrag = NS::TransferPtr(Device->newArgumentTable(ArgTableFragDesc.get(), &error));
-				Sub.ArgTableFrag->setAddress(MeshRender.MaterialIndexBuffer->gpuAddress() + Idx * sizeof(u32), 1);
-				MeshRender.ResidencySet->addAllocation(Sub.IndexBuffer.get());
-
-				MeshRender.Submeshes.emplace_back(Sub);
-
-				Idx++;
-			}
-			MeshRender.ResidencySet->commit();
-
-			return MeshRender;
+			FSkeletonRenderData Result;
+			auto Pose = Skeleton.RestPose.GetMatrixPalette();
+			auto& Bind = Skeleton.InvBindPose;
+			Result.BindTransoformBuffer = NS::TransferPtr(Device->newBuffer(Bind.data(), sizeof(glm::mat4) * Bind.size(), MTL::ResourceStorageModeShared));
+			Result.PoseTransoformBuffer = NS::TransferPtr(Device->newBuffer(Pose.data(), sizeof(glm::mat4) * Pose.size(), MTL::ResourceStorageModeShared));
+			return Result;
 		}
 
-		auto ProcessSkeletalMeshData(MTL::Device* Device, const MDLIO::FSkMeshData& MeshData, u32 MaterialIndexOffset) -> FSkMeshRenderer
+		auto ProcessMeshData(MTL::Device* Device, const Mesh::FMeshData& MeshData, std::unordered_map<std::string, u32>& MaterialMap,
+			FSkeletonRenderData& Skeleton) -> FSkinnedMeshRenderer
 		{
-			FSkMeshRenderer Result;
-			Result.BindTransoformBuffer = NS::TransferPtr(
-				Device->newBuffer(MeshData.BindTransforms.data(), sizeof(glm::mat4) * MeshData.BindTransforms.size(), MTL::ResourceStorageModeShared));
-			Result.PoseTransoformBuffer = NS::TransferPtr(
-				Device->newBuffer(MeshData.RestTransforms.data(), sizeof(glm::mat4) * MeshData.RestTransforms.size(), MTL::ResourceStorageModeShared));
-			for (auto& Mesh : MeshData.Meshes)
-			{
-				FSkeletalMeshRenderer MeshRender(ProcessMeshData(Device, Mesh, MaterialIndexOffset));
-				MaterialIndexOffset += Mesh.Materials.size();
-				MeshRender.SkinBuffer =
-					NS::TransferPtr(Device->newBuffer(Mesh.SkinVertexStream.Data.data(), Mesh.SkinVertexStream.Data.size(), MTL::ResourceStorageModeShared));
-				MeshRender.ArgTableVert->setAddress(MeshRender.SkinBuffer->gpuAddress(), 2);
-				MeshRender.ArgTableVert->setAddress(Result.BindTransoformBuffer->gpuAddress(), 3);
-				MeshRender.ArgTableVert->setAddress(Result.PoseTransoformBuffer->gpuAddress(), 4);
-				MeshRender.ResidencySet->addAllocation(MeshRender.SkinBuffer.get());
-				MeshRender.ResidencySet->addAllocation(Result.BindTransoformBuffer.get());
-				MeshRender.ResidencySet->addAllocation(Result.PoseTransoformBuffer.get());
-				MeshRender.ResidencySet->commit();
-				Result.MeshRender.emplace_back(MeshRender);
-			}
+			FSkinnedMeshRenderer Result(ProcessMeshData(Device, MeshData, MaterialMap));
+			Result.ArgTableVert->setAddress(Skeleton.BindTransoformBuffer->gpuAddress(), 2);
+			Result.ArgTableVert->setAddress(Skeleton.PoseTransoformBuffer->gpuAddress(), 3);
+			Result.ResidencySet->addAllocation(Skeleton.BindTransoformBuffer.get());
+			Result.ResidencySet->addAllocation(Skeleton.PoseTransoformBuffer.get());
+			Result.ResidencySet->commit();
+			Result.SkeletonData = &Skeleton;
 			return Result;
 		}
 	} // namespace Metal
@@ -398,6 +331,7 @@ namespace Engine::Mesh
 		{
 			glm::vec3 Position;
 			glm::vec3 Normal;
+			glm::vec3 Tangent;
 			glm::vec2 TexCoord;
 			glm::vec4 Weights;
 			glm::ivec4 Joints;
@@ -405,7 +339,7 @@ namespace Engine::Mesh
 
 		inline auto operator==(const FVertex& Lhs, const FVertex& Rhs) -> bool
 		{
-			return Lhs.Position == Rhs.Position && Lhs.Normal == Rhs.Normal && Lhs.TexCoord == Rhs.TexCoord && Lhs.Weights == Rhs.Weights
+			return Lhs.Position == Rhs.Position && Lhs.Normal == Rhs.Normal && Lhs.Tangent == Rhs.Tangent && Lhs.TexCoord == Rhs.TexCoord && Lhs.Weights == Rhs.Weights
 				&& Lhs.Joints == Rhs.Joints;
 		}
 		inline auto operator!=(const FVertex& Lhs, const FVertex& Rhs) -> bool
@@ -547,10 +481,18 @@ namespace Engine::Mesh
 					}
 					case cgltf_attribute_type_normal:
 					{
-						auto nornal = glm::vec3(values[Index + 0], values[Index + 1], values[Index + 2]);
-						if (glm::length(nornal) < 0.000001f)
-							nornal = glm::vec3(0, 1, 0);
-						Vertices[Idx].Normal = glm::normalize(nornal);
+						auto normal = glm::vec3(values[Index + 0], values[Index + 1], values[Index + 2]);
+						if (glm::length(normal) < 0.000001f)
+							normal = glm::vec3(0, 1, 0);
+						Vertices[Idx].Normal = glm::normalize(normal);
+						break;
+					}
+					case cgltf_attribute_type_tangent:
+					{
+						auto tangent = glm::vec3(values[Index + 0], values[Index + 1], values[Index + 2]);
+						if (glm::length(tangent) < 0.000001f)
+							tangent = glm::vec3(1, 0, 0);
+						Vertices[Idx].Tangent = glm::normalize(tangent);
 						break;
 					}
 					case cgltf_attribute_type_weights:

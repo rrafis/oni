@@ -47,6 +47,12 @@ namespace Engine::Mesh
 		glm::mat4 Model;
 	};
 
+	struct FSkeletonRenderData
+	{
+		NS::SharedPtr<MTL::Buffer> PoseTransoformBuffer;
+		NS::SharedPtr<MTL::Buffer> BindTransoformBuffer;
+	};
+
 	struct FMeshRenderer
 	{
 		struct FSubmesh
@@ -72,16 +78,9 @@ namespace Engine::Mesh
 		NS::SharedPtr<MTL4::ArgumentTable> ArgTableVert;
 	};
 
-	struct FSkeletalMeshRenderer : public FMeshRenderer
+	struct FSkinnedMeshRenderer : FMeshRenderer
 	{
-		NS::SharedPtr<MTL::Buffer> SkinBuffer;
-	};
-
-	struct FSkMeshRenderer
-	{
-		std::vector<FSkeletalMeshRenderer> MeshRender;
-		NS::SharedPtr<MTL::Buffer> PoseTransoformBuffer;
-		NS::SharedPtr<MTL::Buffer> BindTransoformBuffer;
+		FSkeletonRenderData* SkeletonData;
 	};
 
 	struct alignas(16) FRenderMaterial
@@ -98,80 +97,12 @@ namespace Engine::Mesh
 		MTL::ResourceID OcclusionTex;
 	};
 
-	namespace MDLIO
-	{
-		struct FVertexStream
-		{
-			u32 Stride;
-			std::vector<u8> Data;
-		};
-
-		// Minimal PBR scaffolding
-		struct FPBRMaterial
-		{
-			// Scalar factors
-			glm::vec4 BaseColorFactor = { 1, 1, 1, 1 };
-			f32 MetallicFactor = 1.0f;
-			f32 RoughnessFactor = 1.0f;
-			glm::vec4 EmissiveFactor = { 0, 0, 0, 0 };
-			// Texture references (store paths or IDs; resolve externally)
-			std::string BaseColorTex;
-			std::string MetallicRoughnessTex; // ORM or separate maps
-			std::string NormalTex;
-			std::string EmissiveTex;
-			std::string OcclusionTex;
-			// Alpha, double-sided, etc. as needed
-			bool DoubleSided = false;
-			std::string Name;
-		};
-
-		struct FSubmeshDesc
-		{
-			u32 IndexCount;
-			EIndexType IndexType;
-			EPrimitiveType PrimitiveType;
-			u32 MaterialIndex;		 // index into materials table
-			std::vector<u8> Indices; // raw index data
-
-			// Future-proof extras
-			f32 BoundingSphere[4]; // xyz center + radius
-								   // Or AABB: min[3], max[3]
-		};
-
-		struct FMeshData
-		{
-			u32 VertexCount = 0;
-			FVertexStream VertexStream;
-			std::vector<FSubmeshDesc> Submeshes;
-			std::vector<FPBRMaterial> Materials;
-			std::string Name;
-		};
-
-		struct FSkeletalMeshData : FMeshData
-		{
-			FVertexStream SkinVertexStream;
-		};
-
-		struct FSkMeshData
-		{
-			std::vector<FSkeletalMeshData> Meshes;
-			std::vector<glm::mat4> RestTransforms;
-			std::vector<glm::mat4> BindTransforms;
-			std::vector<std::string> JointNames;
-		};
-
-		auto ExportSphere(MTL::Device* Device, f32 Radius, u32 Segmentes) -> FMeshData;
-		auto ExportBox(MTL::Device* Device, glm::vec3 Extent, glm::uvec3 Segmentes) -> FMeshData;
-		auto ExportCapsule(MTL::Device* Device, glm::vec3 Extent, glm::uvec3 Segmentes) -> FMeshData;
-		auto ExportMeshFromPath(MTL::Device* Device, const char* Path) -> FMeshData;
-		auto ExportSkeletalMeshFromPath(MTL::Device* Device, const char* Path) -> FSkMeshData;
-	} // namespace MDLIO
-
 	namespace Metal
 	{
 		auto ProcessMeshData(MTL::Device* Device, const Mesh::FMeshData& MeshData, std::unordered_map<std::string, u32>& MaterialMap) -> FMeshRenderer;
-		auto ProcessMeshData(MTL::Device* Device, const struct MDLIO::FMeshData& MeshData, u32 MaterialIndexOffset = 0) -> FMeshRenderer;
-		auto ProcessSkeletalMeshData(MTL::Device* Device, const MDLIO::FSkMeshData& MeshData, u32 MaterialIndexOffset) -> FSkMeshRenderer;
+		auto ProcessSkeleton(MTL::Device* Device, const Mesh::FSkeleton& Skeleton) -> FSkeletonRenderData;
+		auto ProcessMeshData(MTL::Device* Device, const Mesh::FMeshData& MeshData, std::unordered_map<std::string, u32>& MaterialMap,
+			FSkeletonRenderData& Skeleton) -> FSkinnedMeshRenderer;
 	} // namespace Metal
 
 	namespace mdl
