@@ -178,8 +178,16 @@ namespace Engine
 			u32 Stride;
 			std::vector<u8> Data; // raw index data
 
-			void Serialize(cereal::JSONOutputArchive& ar, const uint32_t version);
-			void Deserialize(cereal::JSONInputArchive& ar, const uint32_t version);
+			template <class Archive>
+			void Serialize(Archive& ar, const uint32_t version);
+		};
+
+		struct FTexture
+		{
+			u32 Width, Height;
+			u8 Channels;
+			std::vector<u8> Pixels;
+			std::string Name;
 		};
 
 		struct FMaterial
@@ -188,16 +196,16 @@ namespace Engine
 			f32 MetallicFactor = 1.0f;
 			f32 RoughnessFactor = 1.0f;
 			glm::vec4 EmissiveFactor = { 0, 0, 0, 0 };
-			std::string BaseColorTex;
-			std::string MetallicRoughnessTex;
-			std::string NormalTex;
-			std::string EmissiveTex;
-			std::string OcclusionTex;
+			FTexture BaseColorTex;
+			FTexture MetallicRoughnessTex;
+			FTexture NormalTex;
+			FTexture EmissiveTex;
+			FTexture OcclusionTex;
 			bool DoubleSided = false;
 			std::string Name;
 
-			void Serialize(cereal::JSONOutputArchive& ar, const uint32_t version);
-			void Deserialize(cereal::JSONInputArchive& ar, const uint32_t version);
+			template <class Archive>
+			void Serialize(Archive& ar, const uint32_t version);
 		};
 
 		struct FSubmeshData
@@ -206,8 +214,8 @@ namespace Engine
 			EPrimitiveType PrimitiveType;
 			u32 MaterialIndex;
 
-			void Serialize(cereal::JSONOutputArchive& ar, const uint32_t version);
-			void Deserialize(cereal::JSONInputArchive& ar, const uint32_t version);
+			template <class Archive>
+			void Serialize(Archive& ar, const uint32_t version);
 		};
 
 		struct FMeshData
@@ -219,8 +227,8 @@ namespace Engine
 			std::string SkeletonName;
 			bool bHasSkeleton;
 
-			void Serialize(cereal::JSONOutputArchive& ar, const uint32_t version);
-			void Deserialize(cereal::JSONInputArchive& ar, const uint32_t version);
+			template <class Archive>
+			void Serialize(Archive& ar, const uint32_t version);
 		};
 
 		struct FSkeleton

@@ -1,5 +1,6 @@
 #include "MeshUtils.h"
 
+#import <Metal/Metal.h>
 #import <MetalKit/MetalKit.h>
 #import <ModelIO/ModelIO.h>
 
@@ -140,26 +141,51 @@ namespace Engine::Mesh
 			}
 		}
 
-		// Read a Model I/O material into PBR scaffolding
-		static auto ConvertMaterial(MDLMaterial* mdlMat) -> FMaterial
+		static auto LoadImage(u8* data, u32 width, u32 height, u32 channels) -> FTexture;
+		static auto LoadTextureData(id<MTLDevice> Device, id<MTLTexture> mtlTexture) -> id<MTLBuffer>;
+		static auto ConvertMaterial(id<MTLDevice> Device, MDLMaterial* mdlMat) -> FMaterial
 		{
 			FMaterial mat{};
 			if (!mdlMat)
 				return mat;
 			mat.Name = mdlMat.name ? std::string([mdlMat.name UTF8String]) : std::string();
 
-			auto getTexPath = [&](MDLMaterialSemantic sem) -> std::string {
+			auto getTexPath = [&](MDLMaterialSemantic sem) -> Engine::Mesh::FTexture {
 				MDLMaterialProperty* p = [mdlMat propertyWithSemantic:sem];
 				if (!p)
 					return {};
+
+				NSError *error;
+				MTKTextureLoader* textureLoader = [[MTKTextureLoader alloc] initWithDevice:Device];
+				id<MTLTexture> mtlTexture = nil;
+				std::string name = std::string([p.name UTF8String]);
+				if (p.URLValue)
+				{
+					mtlTexture = [textureLoader newTextureWithContentsOfURL:p.URLValue options:nil error:&error];
+				}
+				else if (p.type == MDLMaterialPropertyTypeTexture && p.textureSamplerValue.texture.name)
+				{
+					MDLTextureSampler *sampler = p.textureSamplerValue;
+					MDLTexture *mdlTexture = sampler.texture;
+					mtlTexture = [textureLoader newTextureWithMDLTexture:mdlTexture options:nil error:&error];
+				}
+				
 				if (p.type == MDLMaterialPropertyTypeString && p.stringValue)
 				{
-					return std::string([p.stringValue UTF8String]);
+					name = [p.stringValue UTF8String];
 				}
-				if (p.type == MDLMaterialPropertyTypeTexture && p.textureSamplerValue.texture.name)
+
+				if (mtlTexture)
 				{
-					// TODO: Load texture
-					return std::string([p.textureSamplerValue.texture.name UTF8String]); // or resolve to file path
+					id<MTLBuffer> readBuffer = LoadTextureData(Device, mtlTexture);
+					void* data = [readBuffer contents];
+					usize size = mtlTexture.height * mtlTexture.width * 4;
+					auto Result = LoadImage((u8*)data, (u32)mtlTexture.width, (u32)mtlTexture.height, 4);
+					[mtlTexture release];
+					[readBuffer release];
+
+					Result.Name = name;
+					return Result;
 				}
 				return {};
 			};
@@ -195,8 +221,8 @@ namespace Engine::Mesh
 				if (r && r.type == MDLMaterialPropertyTypeFloat)
 					mat.RoughnessFactor = r.floatValue;
 				// Single ORM texture if present
-				std::string orm = getTexPath(MDLMaterialSemanticMetallic);
-				if (orm.empty())
+				auto orm = getTexPath(MDLMaterialSemanticMetallic);
+				if (orm.Pixels.size() == 0)
 					orm = getTexPath(MDLMaterialSemanticRoughness);
 				mat.MetallicRoughnessTex = orm;
 			}
@@ -397,7 +423,7 @@ namespace Engine::Mesh
 			Result.reserve(matIndex.size());
 			for (auto& [mat, idx] : matIndex)
 			{
-				Result.emplace_back(ConvertMaterial(mat));
+				Result.emplace_back(ConvertMaterial((id<MTLDevice>)Device, mat));
 			}
 
 			return Result;
@@ -518,6 +544,62 @@ namespace Engine::Mesh
 				auto Result = LoadMeshInternal((id<MTLDevice>)Device, mdlMesh, matIndex);
 				return Result;
 			}
+		}
+
+		static auto LoadImage(u8* data, u32 width, u32 height, u32 channels) -> FTexture
+		{
+			if (data == nullptr)
+			{
+				// TODO: Handle error case
+				auto v = *data;
+			}
+
+			auto size = width * height * channels;
+
+			FTexture Texture;
+			Texture.Width = width;
+			Texture.Height = height;
+			Texture.Channels = channels;
+			Texture.Pixels.reserve(size);
+			for (u32 index = 0; index < size; index += 4)
+			{
+				Texture.Pixels.emplace_back(data[index + 2]); // B
+				Texture.Pixels.emplace_back(data[index + 1]); // G
+				Texture.Pixels.emplace_back(data[index + 0]); // R
+				Texture.Pixels.emplace_back(data[index + 3]); // A
+			}
+
+			return Texture;
+		}
+
+		static auto LoadTextureData(id<MTLDevice> Device, id<MTLTexture> mtlTexture) -> id<MTLBuffer>
+		{
+			NSUInteger bytesPerPixel = 4;
+			NSUInteger bytesPerRow = mtlTexture.width * bytesPerPixel;
+			NSUInteger bytesPerImage = mtlTexture.height * bytesPerRow;
+
+			id<MTLBuffer> readBuffer = [Device newBufferWithLength:bytesPerImage 
+														options:MTLResourceStorageModeShared];
+
+			auto CommandQueue = [Device newCommandQueue];
+			id<MTLCommandBuffer> commandBuffer = [CommandQueue commandBuffer];
+
+			id<MTLBlitCommandEncoder> blitEncoder = [commandBuffer blitCommandEncoder];
+			[blitEncoder copyFromTexture:mtlTexture
+							sourceSlice:0 
+							sourceLevel:0 
+							sourceOrigin:MTLOriginMake(0, 0, 0) 
+							sourceSize:MTLSizeMake(mtlTexture.width, mtlTexture.height, 1) 
+								toBuffer:readBuffer 
+						destinationOffset:0 
+						destinationBytesPerRow:bytesPerRow 
+					destinationBytesPerImage:bytesPerImage];
+			[blitEncoder endEncoding];
+
+			[commandBuffer commit];
+			[commandBuffer waitUntilCompleted];
+			
+			return readBuffer;
 		}
 	} // namespace mdl
 }

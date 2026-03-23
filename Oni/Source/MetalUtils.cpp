@@ -14,6 +14,8 @@
 #define CGLTF_IMPLEMENTATION
 #include <cgltf.h>
 
+#include <stb_image.h>
+
 namespace Engine::Mesh
 {
 	namespace Metal
@@ -657,6 +659,7 @@ namespace Engine::Mesh
 			return Result;
 		}
 
+		auto LoadImageData(const cgltf_image* image) -> FTexture;
 		auto LoadMaterial(cgltf_data* data) -> std::vector<Mesh::FMaterial>
 		{
 			std::vector<FMaterial> Result;
@@ -674,16 +677,27 @@ namespace Engine::Mesh
 				memcpy(&Meterial.EmissiveFactor.r, srcMat.emissive_factor, sizeof(f32) * 3);
 
 				// Copy texture paths
-				auto GetTexturePath = [](const cgltf_texture_view* view) -> std::string {
-					if (!view || !view->texture || !view->texture->image || !view->texture->image->uri)
-						return "";
-					return view->texture->image->uri;
+				auto GetTexture = [](const cgltf_texture_view* view) -> FTexture {
+					if (!view || !view->texture || !view->texture->image)
+						return FTexture();
+					return LoadImageData(view->texture->image);
 				};
-				Meterial.BaseColorTex = GetTexturePath(&pbr.base_color_texture);
-				Meterial.MetallicRoughnessTex = GetTexturePath(&pbr.metallic_roughness_texture);
-				Meterial.NormalTex = GetTexturePath(&srcMat.normal_texture);
-				Meterial.EmissiveTex = GetTexturePath(&srcMat.emissive_texture);
-				Meterial.OcclusionTex = GetTexturePath(&srcMat.occlusion_texture);
+				Meterial.BaseColorTex = GetTexture(&pbr.base_color_texture);
+				Meterial.BaseColorTex.Name =
+					(pbr.base_color_texture.texture && pbr.base_color_texture.texture->name) ? pbr.base_color_texture.texture->name : "Diffuse";
+				Meterial.MetallicRoughnessTex = GetTexture(&pbr.metallic_roughness_texture);
+				Meterial.MetallicRoughnessTex.Name = (pbr.metallic_roughness_texture.texture && pbr.metallic_roughness_texture.texture->name)
+					? pbr.metallic_roughness_texture.texture->name
+					: "MetallicRoughness";
+				Meterial.NormalTex = GetTexture(&srcMat.normal_texture);
+				Meterial.NormalTex.Name =
+					(srcMat.normal_texture.texture && srcMat.normal_texture.texture->name) ? srcMat.normal_texture.texture->name : "Normal";
+				Meterial.EmissiveTex = GetTexture(&srcMat.emissive_texture);
+				Meterial.EmissiveTex.Name =
+					(srcMat.emissive_texture.texture && srcMat.emissive_texture.texture->name) ? srcMat.emissive_texture.texture->name : "Emissive";
+				Meterial.OcclusionTex = GetTexture(&srcMat.occlusion_texture);
+				Meterial.OcclusionTex.Name =
+					(srcMat.occlusion_texture.texture && srcMat.occlusion_texture.texture->name) ? srcMat.occlusion_texture.texture->name : "Occlusion";
 
 				// Other properties
 				Meterial.DoubleSided = srcMat.double_sided;
@@ -691,6 +705,124 @@ namespace Engine::Mesh
 			}
 
 			return Result;
+		}
+
+		auto LoadImage(void* image_data, usize image_size) -> FTexture
+		{
+			stbi_set_flip_vertically_on_load(true);
+
+			int width, height, channels;
+			unsigned char* data = stbi_load_from_memory((stbi_uc*)image_data, image_size, &width, &height, &channels, 4);
+			channels = 4;
+
+			if (data == nullptr)
+			{
+				// TODO: Handle error case
+				auto v = *data;
+			}
+
+			auto size = width * height * channels;
+
+			FTexture Texture;
+			Texture.Width = width;
+			Texture.Height = height;
+			Texture.Channels = channels;
+			Texture.Pixels.reserve(size);
+			for (u32 index = 0; index < size; index += 4)
+			{
+				Texture.Pixels.emplace_back(data[index + 0]);
+				Texture.Pixels.emplace_back(data[index + 1]);
+				Texture.Pixels.emplace_back(data[index + 2]);
+				Texture.Pixels.emplace_back(data[index + 3]);
+			}
+
+			// std::cout << "Image loaded: " << width << "x" << height << " with " << channels << " channels." << std::endl;
+
+			// Free memory when done
+			stbi_image_free(data);
+
+			return Texture;
+		}
+
+		auto LoadImage(const char* path) -> FTexture
+		{
+			stbi_set_flip_vertically_on_load(true);
+
+			int width, height, channels;
+			unsigned char* data = stbi_load(path, &width, &height, &channels, 4);
+			channels = 4;
+
+			if (data == nullptr)
+			{
+				// TODO: Handle error case
+				auto v = *data;
+			}
+
+			auto size = width * height * channels;
+
+			FTexture Texture;
+			Texture.Width = width;
+			Texture.Height = height;
+			Texture.Channels = channels;
+			Texture.Pixels.reserve(size);
+			for (u32 index = 0; index < size; index += 4)
+			{
+				Texture.Pixels.emplace_back(data[index + 0]);
+				Texture.Pixels.emplace_back(data[index + 1]);
+				Texture.Pixels.emplace_back(data[index + 2]);
+				Texture.Pixels.emplace_back(data[index + 3]);
+			}
+
+			// std::cout << "Image loaded: " << width << "x" << height << " with " << channels << " channels." << std::endl;
+
+			// Free memory when done
+			stbi_image_free(data);
+
+			return Texture;
+		}
+
+		auto LoadImageData(const cgltf_image* image) -> FTexture
+		{
+			void* data = nullptr;
+			FTexture Tex;
+
+			if (image->uri && !image->buffer_view)
+			{
+				Tex = LoadImage(image->uri);
+			}
+			else if (image->buffer_view)
+			{
+				// Case 2: Embedded in a buffer view
+				cgltf_buffer_view* view = image->buffer_view;
+				usize size = view->size;
+				data = malloc(size);
+				if (data)
+				{
+					memcpy(data, (char*)view->buffer->data + view->offset, size);
+				}
+				Tex = LoadImage(data, size);
+				free(data);
+			}
+			else if (image->uri && image->mime_type)
+			{
+				char* base64_data = strchr(image->uri, ',');
+				if (!base64_data)
+					return FTexture();
+				base64_data++; // Skip the comma
+
+				usize size = cgltf_decode_string(base64_data);
+				if (size == 0)
+					return FTexture();
+
+				cgltf_options options{};
+				if (!(cgltf_load_buffer_base64(&options, size, base64_data, &data) != cgltf_result_success))
+				{
+					Tex = LoadImage(data, size);
+					cgltf_default_free(nullptr, data);
+				}
+			}
+
+			return Tex;
 		}
 	} // namespace gltf
 } // namespace Engine::Mesh

@@ -7,7 +7,9 @@
 #include "Serealization.inl"
 
 #define STB_IMAGE_IMPLEMENTATION
+#define STB_IMAGE_WRITE_IMPLEMENTATION
 #include <stb_image.h>
+#include <stb_image_write.h>
 
 #include "MeshUtils.h"
 #include "PlayerController.h"
@@ -308,6 +310,11 @@ struct FTexture
 	std::vector<u8> Pixels;
 };
 
+auto WriteImage(Engine::Mesh::FTexture Texture, const char* Path)
+{
+	stbi_write_png(Path, Texture.Width, Texture.Height, Texture.Channels, Texture.Pixels.data(), Texture.Width * Texture.Channels);
+}
+
 auto LoadImage(const char* path) -> FTexture
 {
 	stbi_set_flip_vertically_on_load(true);
@@ -381,6 +388,19 @@ auto LoadTexture(FGameState& State, const char* RootPath, const char* Name) -> M
 	return CreateTexture(State, State.Device, RawTexture, Name);
 }
 
+auto SaveTexture(Engine::Mesh::FTexture& Texture, const char* RootPath, const char* Name) -> void
+{
+	auto SavePath = std::filesystem::current_path() / ContentPath / "Assets" / RootPath / Name;
+	SavePath.replace_extension(".png");
+	std::error_code ec;
+	std::filesystem::create_directories(SavePath.parent_path(), ec);
+	if (ec)
+	{
+		std::cerr << "Failed: " << ec.message() << "\n";
+	}
+	WriteImage(Texture, SavePath.c_str());
+}
+
 auto CreateDummyTexture(FGameState& State, const char* Name = "Dummy") -> MTL::ResourceID
 {
 	FTexture RawTexture;
@@ -399,14 +419,17 @@ auto CreateDummyTexture(FGameState& State, const char* Name = "Dummy") -> MTL::R
 auto LoadMesh(FGameState& State, MTL::Device* Device, std::vector<Engine::Mesh::FMeshData> Meshes, const char* Alias = nullptr,
 	std::vector<Engine::Mesh::FSkeleton> Skeletons = {}, std::vector<Engine::Mesh::FMaterial> Materials = {}, const char* RootPath = nullptr) -> void
 {
+	std::string MeshName;
 	for (u32 Idx = 0; Idx < Meshes.size(); Idx++)
 	{
 		u32 Index = State.NewMeshes.size();
 		State.NewMeshes.emplace_back(Meshes[Idx]);
 		State.MeshesMap[Meshes[Idx].Name] = Index;
+		MeshName = Meshes[Idx].Name;
 		if (Alias)
 		{
 			State.MeshesMap[Alias] = Index;
+			MeshName = Alias;
 		}
 	}
 
@@ -429,22 +452,29 @@ auto LoadMesh(FGameState& State, MTL::Device* Device, std::vector<Engine::Mesh::
 		RenderMat.MetallicFactor = mat.MetallicFactor;
 		RenderMat.RoughnessFactor = mat.RoughnessFactor;
 
-		if (mat.BaseColorTex.size() > 0)
-			RenderMat.BaseColorTex = LoadTexture(State, RootPath, mat.BaseColorTex.data());
-		else
-			RenderMat.BaseColorTex = State.DummyTexture;
-
-		if (mat.MetallicRoughnessTex.size() > 0)
-			RenderMat.MetallicRoughnessTex = LoadTexture(State, RootPath, mat.MetallicRoughnessTex.data());
-
-		if (mat.NormalTex.size() > 0)
-			RenderMat.NormalTex = LoadTexture(State, RootPath, mat.NormalTex.data());
-
-		if (mat.EmissiveTex.size() > 0)
-			RenderMat.EmissiveTex = LoadTexture(State, RootPath, mat.EmissiveTex.data());
-
-		if (mat.OcclusionTex.size() > 0)
-			RenderMat.OcclusionTex = LoadTexture(State, RootPath, mat.OcclusionTex.data());
+		std::string Root = RootPath;
+		Root += "/";
+		Root += MeshName;
+		if (mat.BaseColorTex.Pixels.size())
+		{
+			SaveTexture(mat.BaseColorTex, Root.data(), mat.BaseColorTex.Name.data());
+		}
+		if (mat.MetallicRoughnessTex.Pixels.size())
+		{
+			SaveTexture(mat.MetallicRoughnessTex, Root.data(), mat.MetallicRoughnessTex.Name.data());
+		}
+		if (mat.NormalTex.Pixels.size())
+		{
+			SaveTexture(mat.NormalTex, Root.data(), mat.NormalTex.Name.data());
+		}
+		if (mat.EmissiveTex.Pixels.size())
+		{
+			SaveTexture(mat.EmissiveTex, Root.data(), mat.EmissiveTex.Name.data());
+		}
+		if (mat.OcclusionTex.Pixels.size())
+		{
+			SaveTexture(mat.OcclusionTex, Root.data(), mat.OcclusionTex.Name.data());
+		}
 
 		State.Materials.emplace_back(RenderMat);
 	}
@@ -573,6 +603,7 @@ RE_API auto GameInitialize(FGameMemory& Memory) -> void
 		State.Materials.emplace_back(RenderMat);
 	}
 
+	LoadMesh(State, State.Device, "meshes", "DamagedHelmet.glb", "DamagedHelmet");
 	LoadMesh(State, State.Device, "meshes/samanosuke_future", "Future_Samanosuke.obj", "Samanosuke");
 	LoadMesh(State, State.Device, "meshes/samanosuke_weapons", "Tensou_lvl_3.obj", "Tensou");
 	LoadMesh(State, State.Device, "meshes", "mannequiny-0.3.0.glb", "Mannequiny");
