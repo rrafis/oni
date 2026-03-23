@@ -47,41 +47,41 @@ namespace Engine::Mesh
 		glm::mat4 Model;
 	};
 
-	struct FSkeletonRenderData
-	{
-		NS::SharedPtr<MTL::Buffer> PoseTransoformBuffer;
-		NS::SharedPtr<MTL::Buffer> BindTransoformBuffer;
-	};
+	// struct FSkeletonRenderData
+	// {
+	// 	NS::SharedPtr<MTL::Buffer> PoseTransoformBuffer;
+	// 	NS::SharedPtr<MTL::Buffer> BindTransoformBuffer;
+	// };
 
-	struct FMeshRenderer
-	{
-		struct FSubmesh
-		{
-			MTL::IndexType IndexType;
-			u32 IndexCount;
-			NS::SharedPtr<MTL::Buffer> IndexBuffer;
-			NS::SharedPtr<MTL4::ArgumentTable> ArgTableFrag;
+	// struct FMeshRenderer
+	// {
+	// 	struct FSubmesh
+	// 	{
+	// 		MTL::IndexType IndexType;
+	// 		u32 IndexCount;
+	// 		NS::SharedPtr<MTL::Buffer> IndexBuffer;
+	// 		NS::SharedPtr<MTL4::ArgumentTable> ArgTableFrag;
 
-			u32 IbSize;
-			MTL::GPUAddress IbAddress;
+	// 		u32 IbSize;
+	// 		MTL::GPUAddress IbAddress;
 
-			bool bDoubleSided;
-			bool bWindingOrderClockWise;
-			bool bWireframe = false;
-		};
+	// 		bool bDoubleSided;
+	// 		bool bWindingOrderClockWise;
+	// 		bool bWireframe = false;
+	// 	};
 
-		std::vector<FSubmesh> Submeshes;
-		NS::SharedPtr<MTL::Buffer> VertexBuffer;
-		NS::SharedPtr<MTL::Buffer> UniformBuffer;
-		NS::SharedPtr<MTL::Buffer> MaterialIndexBuffer;
-		NS::SharedPtr<MTL::ResidencySet> ResidencySet;
-		NS::SharedPtr<MTL4::ArgumentTable> ArgTableVert;
-	};
+	// 	std::vector<FSubmesh> Submeshes;
+	// 	NS::SharedPtr<MTL::Buffer> VertexBuffer;
+	// 	NS::SharedPtr<MTL::Buffer> UniformBuffer;
+	// 	NS::SharedPtr<MTL::Buffer> MaterialIndexBuffer;
+	// 	NS::SharedPtr<MTL::ResidencySet> ResidencySet;
+	// 	NS::SharedPtr<MTL4::ArgumentTable> ArgTableVert;
+	// };
 
-	struct FSkinnedMeshRenderer : FMeshRenderer
-	{
-		FSkeletonRenderData* SkeletonData;
-	};
+	// struct FSkinnedMeshRenderer : FMeshRenderer
+	// {
+	// 	FSkeletonRenderData* SkeletonData;
+	// };
 
 	struct alignas(16) FRenderMaterial
 	{
@@ -99,10 +99,10 @@ namespace Engine::Mesh
 
 	namespace Metal
 	{
-		auto ProcessMeshData(MTL::Device* Device, const Mesh::FMeshData& MeshData, std::unordered_map<std::string, u32>& MaterialMap) -> FMeshRenderer;
-		auto ProcessSkeleton(MTL::Device* Device, const Mesh::FSkeleton& Skeleton) -> FSkeletonRenderData;
+		auto ProcessMeshData(MTL::Device* Device, const Mesh::FMeshData& MeshData, std::unordered_map<std::string, u32>& MaterialMap) -> Comp::FMeshRenderer;
+		auto ProcessSkeleton(MTL::Device* Device, const Mesh::FSkeleton& Skeleton) -> Comp::FSkeletonRenderData;
 		auto ProcessMeshData(MTL::Device* Device, const Mesh::FMeshData& MeshData, std::unordered_map<std::string, u32>& MaterialMap,
-			FSkeletonRenderData& Skeleton) -> FSkinnedMeshRenderer;
+			Comp::FSkeletonRenderData& Skeleton) -> Comp::FMeshRenderer;
 	} // namespace Metal
 
 	namespace mdl

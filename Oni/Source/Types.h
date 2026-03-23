@@ -18,6 +18,8 @@
 #include <glm/gtx/quaternion.hpp>
 #include <glm/gtx/transform.hpp>
 
+#include <Metal/Metal.hpp>
+
 namespace glm
 {
 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR quat quat_identity()
@@ -36,9 +38,8 @@ namespace glm
 	}
 } // namespace glm
 
-namespace Engine
+namespace Comp
 {
-
 	struct FTransform
 	{
 		glm::vec3 Position = glm::vec3();
@@ -46,11 +47,45 @@ namespace Engine
 		glm::vec3 Scale = glm::vec3(1.0f);
 	};
 
+	struct FSkeletonRenderData
+	{
+		NS::SharedPtr<MTL::Buffer> PoseTransoformBuffer;
+		NS::SharedPtr<MTL::Buffer> BindTransoformBuffer;
+	};
+
+	struct FMeshRenderer
+	{
+		struct FSubmesh
+		{
+			MTL::IndexType IndexType;
+			u32 IndexCount;
+			NS::SharedPtr<MTL::Buffer> IndexBuffer;
+			NS::SharedPtr<MTL4::ArgumentTable> ArgTableFrag;
+
+			u32 IbSize;
+			MTL::GPUAddress IbAddress;
+
+			bool bDoubleSided;
+			bool bWindingOrderClockWise;
+			bool bWireframe = false;
+		};
+
+		std::vector<FSubmesh> Submeshes;
+		NS::SharedPtr<MTL::Buffer> VertexBuffer;
+		NS::SharedPtr<MTL::Buffer> UniformBuffer;
+		NS::SharedPtr<MTL::Buffer> MaterialIndexBuffer;
+		NS::SharedPtr<MTL::ResidencySet> ResidencySet;
+		NS::SharedPtr<MTL4::ArgumentTable> ArgTableVert;
+	};
+} // namespace Comp
+
+namespace Engine
+{
 	namespace Animation
 	{
 		struct FPose
 		{
-			std::vector<FTransform> Joints;
+			std::vector<Comp::FTransform> Joints;
 			std::vector<i32> Parents;
 
 			auto GetGlobaMatrix(u32 Joint) const -> glm::mat4;
@@ -76,9 +111,9 @@ namespace Engine
 				return 0.0f;
 			}
 
-			auto Sample(const FTransform& Base, f32 AtTime, bool bLooping) -> FTransform
+			auto Sample(const Comp::FTransform& Base, f32 AtTime, bool bLooping) -> Comp::FTransform
 			{
-				FTransform Result = Base;
+				Comp::FTransform Result = Base;
 
 				// if (Position.Frames.size() > 1)
 				// {
@@ -188,23 +223,23 @@ namespace Engine
 
 	namespace Transform
 	{
-		auto Combine(const FTransform& Lhs, const FTransform& Rhs) -> FTransform;
-		auto Inverse(const FTransform& In) -> FTransform;
-		auto Mix(const FTransform& Lhs, const FTransform& Rhs, f32 Time) -> FTransform;
+		auto Combine(const Comp::FTransform& Lhs, const Comp::FTransform& Rhs) -> Comp::FTransform;
+		auto Inverse(const Comp::FTransform& In) -> Comp::FTransform;
+		auto Mix(const Comp::FTransform& Lhs, const Comp::FTransform& Rhs, f32 Time) -> Comp::FTransform;
 
-		auto ToMatrix(const FTransform& In) -> glm::mat4;
+		auto ToMatrix(const Comp::FTransform& In) -> glm::mat4;
 
-		auto ToTransform(const glm::mat4& Matrix) -> FTransform;
-		auto ToTransform(const glm::dualquat& DualQuat) -> FTransform;
+		auto ToTransform(const glm::mat4& Matrix) -> Comp::FTransform;
+		auto ToTransform(const glm::dualquat& DualQuat) -> Comp::FTransform;
 
-		auto ToDualQuat(const FTransform& Transform) -> glm::dualquat;
+		auto ToDualQuat(const Comp::FTransform& Transform) -> glm::dualquat;
 		auto ToDualQuat(const glm::mat4& Matrix) -> glm::dualquat;
 
-		auto Point(const FTransform& In, const glm::vec3& Point) -> glm::vec3;
+		auto Point(const Comp::FTransform& In, const glm::vec3& Point) -> glm::vec3;
 		auto Point(const glm::mat4& M, const glm::vec3& p) -> glm::vec3;
 		auto Point(const glm::dualquat& dq, const glm::vec3& p) -> glm::vec3;
 
-		auto Vector(const FTransform& In, const glm::vec3& Vector) -> glm::vec3;
+		auto Vector(const Comp::FTransform& In, const glm::vec3& Vector) -> glm::vec3;
 		auto Vector(const glm::mat4& M, const glm::vec3& v) -> glm::vec3;
 		auto Vector(const glm::dualquat& dq, const glm::vec3& v) -> glm::vec3;
 	} // namespace Transform

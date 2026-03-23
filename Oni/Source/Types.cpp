@@ -27,9 +27,9 @@ namespace Engine::Animation
 
 namespace Engine::Transform
 {
-	auto Combine(const FTransform& Lhs, const FTransform& Rhs) -> FTransform
+	auto Combine(const Comp::FTransform& Lhs, const Comp::FTransform& Rhs) -> Comp::FTransform
 	{
-		FTransform Result = {};
+		Comp::FTransform Result = {};
 
 		// Scale: Parent.Scale * Child.Scale
 		Result.Scale = Lhs.Scale * Rhs.Scale;
@@ -41,9 +41,9 @@ namespace Engine::Transform
 		return Result;
 	}
 
-	auto Inverse(const FTransform& In) -> FTransform
+	auto Inverse(const Comp::FTransform& In) -> Comp::FTransform
 	{
-		FTransform Result;
+		Comp::FTransform Result;
 
 		Result.Rotation = glm::inverse(In.Rotation);
 
@@ -56,9 +56,9 @@ namespace Engine::Transform
 		return Result;
 	}
 
-	auto Mix(const FTransform& Lhs, const FTransform& Rhs, f32 Time) -> FTransform
+	auto Mix(const Comp::FTransform& Lhs, const Comp::FTransform& Rhs, f32 Time) -> Comp::FTransform
 	{
-		FTransform Result = {};
+		Comp::FTransform Result = {};
 
 		auto RhsRot = Rhs.Rotation;
 		if (glm::dot(Lhs.Rotation, Rhs.Rotation) < 0.0f)
@@ -73,7 +73,7 @@ namespace Engine::Transform
 		return Result;
 	}
 
-	auto ToMatrix(const FTransform& In) -> glm::mat4
+	auto ToMatrix(const Comp::FTransform& In) -> glm::mat4
 	{
 		// Translation
 		glm::mat4 translation = glm::translate(glm::identity<glm::mat4>(), In.Position);
@@ -85,9 +85,9 @@ namespace Engine::Transform
 		return translation * rotation * scale;
 	}
 
-	auto ToTransform(const glm::mat4& Matrix) -> FTransform
+	auto ToTransform(const glm::mat4& Matrix) -> Comp::FTransform
 	{
-		FTransform Result = {};
+		Comp::FTransform Result = {};
 		Result.Rotation = glm::normalize(glm::quat_cast(Matrix));
 		Result.Position = glm::vec3(Matrix[3]);
 
@@ -100,16 +100,16 @@ namespace Engine::Transform
 		return Result;
 	}
 
-	auto ToTransform(glm::dualquat const& DualQuat) -> FTransform
+	auto ToTransform(glm::dualquat const& DualQuat) -> Comp::FTransform
 	{
-		FTransform Result;
+		Comp::FTransform Result;
 		Result.Rotation = DualQuat.real;
 		glm::dualquat::part_type d = glm::conjugate(DualQuat.real) * (DualQuat.dual * 2.0f);
 		Result.Position = glm::vec3(d.x, d.y, d.z);
 		return Result;
 	}
 
-	auto ToDualQuat(FTransform const& Transform) -> glm::dualquat
+	auto ToDualQuat(Comp::FTransform const& Transform) -> glm::dualquat
 	{
 		glm::dualquat::part_type d(0.0f, Transform.Position);
 		glm::dualquat::part_type qr = Transform.Rotation;
@@ -127,7 +127,7 @@ namespace Engine::Transform
 		return glm::normalize(glm::dualquat(qr, qd));
 	}
 
-	auto Point(const FTransform& In, const glm::vec3& Point) -> glm::vec3
+	auto Point(const Comp::FTransform& In, const glm::vec3& Point) -> glm::vec3
 	{
 		return In.Position + In.Rotation * (In.Scale * Point);
 	}
@@ -147,7 +147,7 @@ namespace Engine::Transform
 		return dq.real * p + t;
 	}
 
-	auto Vector(const FTransform& In, const glm::vec3& Vector) -> glm::vec3
+	auto Vector(const Comp::FTransform& In, const glm::vec3& Vector) -> glm::vec3
 	{
 		return In.Rotation * (In.Scale * Vector);
 	}

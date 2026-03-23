@@ -88,9 +88,9 @@ namespace Engine::Mesh
 			}
 		}
 
-		auto ProcessMeshData(MTL::Device* Device, const Mesh::FMeshData& MeshData, std::unordered_map<std::string, u32>& MaterialMap) -> FMeshRenderer
+		auto ProcessMeshData(MTL::Device* Device, const Mesh::FMeshData& MeshData, std::unordered_map<std::string, u32>& MaterialMap) -> Comp::FMeshRenderer
 		{
-			FMeshRenderer MeshRender;
+			Comp::FMeshRenderer MeshRender;
 			MeshRender.VertexBuffer =
 				NS::TransferPtr(Device->newBuffer(MeshData.VertexStream.Data.data(), MeshData.VertexStream.Data.size(), MTL::ResourceStorageModeShared));
 			MeshRender.UniformBuffer = NS::TransferPtr(Device->newBuffer(sizeof(Engine::Mesh::FMeshUniform), MTL::ResourceStorageModeShared));
@@ -130,7 +130,7 @@ namespace Engine::Mesh
 			{
 				MatIndex[Idx] = MaterialMap[MeshData.Materials[Submesh.MaterialIndex]];
 
-				FMeshRenderer::FSubmesh Sub;
+				Comp::FMeshRenderer::FSubmesh Sub;
 				Sub.IndexType = Engine::Mesh::Metal::MapIndexType(Submesh.IndexStream.Stride);
 				Sub.IndexCount = Submesh.IndexStream.Count;
 				Sub.IndexBuffer =
@@ -154,9 +154,9 @@ namespace Engine::Mesh
 			return MeshRender;
 		}
 
-		auto ProcessSkeleton(MTL::Device* Device, const Mesh::FSkeleton& Skeleton) -> FSkeletonRenderData
+		auto ProcessSkeleton(MTL::Device* Device, const Mesh::FSkeleton& Skeleton) -> Comp::FSkeletonRenderData
 		{
-			FSkeletonRenderData Result;
+			Comp::FSkeletonRenderData Result;
 			auto Pose = Skeleton.RestPose.GetMatrixPalette();
 			auto& Bind = Skeleton.InvBindPose;
 			Result.BindTransoformBuffer = NS::TransferPtr(Device->newBuffer(Bind.data(), sizeof(glm::mat4) * Bind.size(), MTL::ResourceStorageModeShared));
@@ -165,15 +165,14 @@ namespace Engine::Mesh
 		}
 
 		auto ProcessMeshData(MTL::Device* Device, const Mesh::FMeshData& MeshData, std::unordered_map<std::string, u32>& MaterialMap,
-			FSkeletonRenderData& Skeleton) -> FSkinnedMeshRenderer
+			Comp::FSkeletonRenderData& Skeleton) -> Comp::FMeshRenderer
 		{
-			FSkinnedMeshRenderer Result(ProcessMeshData(Device, MeshData, MaterialMap));
+			Comp::FMeshRenderer Result(ProcessMeshData(Device, MeshData, MaterialMap));
 			Result.ArgTableVert->setAddress(Skeleton.BindTransoformBuffer->gpuAddress(), 2);
 			Result.ArgTableVert->setAddress(Skeleton.PoseTransoformBuffer->gpuAddress(), 3);
 			Result.ResidencySet->addAllocation(Skeleton.BindTransoformBuffer.get());
 			Result.ResidencySet->addAllocation(Skeleton.PoseTransoformBuffer.get());
 			Result.ResidencySet->commit();
-			Result.SkeletonData = &Skeleton;
 			return Result;
 		}
 	} // namespace Metal
@@ -212,9 +211,9 @@ namespace Engine::Mesh
 				}
 			}
 
-			auto GetLocalTransform(const cgltf_node& Node) -> FTransform
+			auto GetLocalTransform(const cgltf_node& Node) -> Comp::FTransform
 			{
-				FTransform Result;
+				Comp::FTransform Result;
 				if (Node.has_matrix)
 				{
 					glm::mat4 m;
@@ -273,7 +272,7 @@ namespace Engine::Mesh
 				for (u32 Index = 0; Index < BoneCount; Index++)
 				{
 					cgltf_node* Node = &(Data->nodes[Index]);
-					FTransform Transform = GetLocalTransform(*Node);
+					Comp::FTransform Transform = GetLocalTransform(*Node);
 					Result.Joints[Index] = Transform;
 					i32 ParentIndex = GetNodeIndex(Node->parent, Data->nodes, BoneCount);
 					Result.Parents[Index] = ParentIndex;
@@ -339,8 +338,8 @@ namespace Engine::Mesh
 
 		inline auto operator==(const FVertex& Lhs, const FVertex& Rhs) -> bool
 		{
-			return Lhs.Position == Rhs.Position && Lhs.Normal == Rhs.Normal && Lhs.Tangent == Rhs.Tangent && Lhs.TexCoord == Rhs.TexCoord && Lhs.Weights == Rhs.Weights
-				&& Lhs.Joints == Rhs.Joints;
+			return Lhs.Position == Rhs.Position && Lhs.Normal == Rhs.Normal && Lhs.Tangent == Rhs.Tangent && Lhs.TexCoord == Rhs.TexCoord
+				&& Lhs.Weights == Rhs.Weights && Lhs.Joints == Rhs.Joints;
 		}
 		inline auto operator!=(const FVertex& Lhs, const FVertex& Rhs) -> bool
 		{
