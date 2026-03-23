@@ -20,6 +20,9 @@
 
 #include <Metal/Metal.hpp>
 
+#include <cereal/archives/json.hpp>
+#include <cereal/cereal.hpp>
+
 namespace glm
 {
 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR quat quat_identity()
@@ -174,6 +177,9 @@ namespace Engine
 			u64 Count;
 			u32 Stride;
 			std::vector<u8> Data; // raw index data
+
+			void Serialize(cereal::JSONOutputArchive& ar, const uint32_t version);
+			void Deserialize(cereal::JSONInputArchive& ar, const uint32_t version);
 		};
 
 		struct FMaterial
@@ -189,6 +195,9 @@ namespace Engine
 			std::string OcclusionTex;
 			bool DoubleSided = false;
 			std::string Name;
+
+			void Serialize(cereal::JSONOutputArchive& ar, const uint32_t version);
+			void Deserialize(cereal::JSONInputArchive& ar, const uint32_t version);
 		};
 
 		struct FSubmeshData
@@ -197,9 +206,8 @@ namespace Engine
 			EPrimitiveType PrimitiveType;
 			u32 MaterialIndex;
 
-			// Future-proof extras
-			f32 BoundingSphere[4]; // xyz center + radius
-								   // Or AABB: min[3], max[3]
+			void Serialize(cereal::JSONOutputArchive& ar, const uint32_t version);
+			void Deserialize(cereal::JSONInputArchive& ar, const uint32_t version);
 		};
 
 		struct FMeshData
@@ -210,6 +218,9 @@ namespace Engine
 			std::string Name;
 			std::string SkeletonName;
 			bool bHasSkeleton;
+
+			void Serialize(cereal::JSONOutputArchive& ar, const uint32_t version);
+			void Deserialize(cereal::JSONInputArchive& ar, const uint32_t version);
 		};
 
 		struct FSkeleton

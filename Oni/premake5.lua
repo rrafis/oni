@@ -23,6 +23,7 @@ project "Oni"
 	filter {}
 
 	linkCgltf()
+	linkCereal()
 
 	externalincludedirs {
 		"%{wks.location}/ThirdParty/entt/src",

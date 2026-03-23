@@ -10,3 +10,6 @@
 [submodule "ThirdParty/cgltf/cgltf"]
 	path = ThirdParty/cgltf/cgltf
 	url = https://github.com/jkuhlmann/cgltf.git
+[submodule "ThirdParty/cereal/cereal"]
+	path = ThirdParty/cereal/cereal
+	url = git@github.com:USCiLab/cereal.git
