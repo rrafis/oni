@@ -88,7 +88,8 @@ namespace Engine::Mesh
 			}
 		}
 
-		auto ProcessMeshData(MTL::Device* Device, const Mesh::FMeshData& MeshData, std::unordered_map<std::string, u32>& MaterialMap) -> Comp::FMeshRenderer
+		auto ProcessMeshData(MTL::Device* Device, const Mesh::FMeshData& MeshData, std::unordered_map<std::string, u32>& MaterialMap,
+			Comp::FSkeletonRenderData* Skeleton) -> Comp::FMeshRenderer
 		{
 			Comp::FMeshRenderer MeshRender;
 			MeshRender.VertexBuffer =
@@ -118,6 +119,14 @@ namespace Engine::Mesh
 			MeshRender.ResidencySet->addAllocation(MeshRender.VertexBuffer.get());
 			MeshRender.ResidencySet->addAllocation(MeshRender.UniformBuffer.get());
 			MeshRender.ResidencySet->addAllocation(MeshRender.MaterialIndexBuffer.get());
+			if (MeshData.bHasSkeleton)
+			{
+				MeshRender.ArgTableVert->setAddress(Skeleton->BindTransoformBuffer->gpuAddress(), 2);
+				MeshRender.ArgTableVert->setAddress(Skeleton->PoseTransoformBuffer->gpuAddress(), 3);
+
+				MeshRender.ResidencySet->addAllocation(Skeleton->BindTransoformBuffer.get());
+				MeshRender.ResidencySet->addAllocation(Skeleton->PoseTransoformBuffer.get());
+			}
 
 			NS::SharedPtr<MTL4::ArgumentTableDescriptor> ArgTableFragDesc = NS::TransferPtr(MTL4::ArgumentTableDescriptor::alloc()->init());
 			ArgTableFragDesc->setMaxBufferBindCount(2);
@@ -161,18 +170,6 @@ namespace Engine::Mesh
 			auto& Bind = Skeleton.InvBindPose;
 			Result.BindTransoformBuffer = NS::TransferPtr(Device->newBuffer(Bind.data(), sizeof(glm::mat4) * Bind.size(), MTL::ResourceStorageModeShared));
 			Result.PoseTransoformBuffer = NS::TransferPtr(Device->newBuffer(Pose.data(), sizeof(glm::mat4) * Pose.size(), MTL::ResourceStorageModeShared));
-			return Result;
-		}
-
-		auto ProcessMeshData(MTL::Device* Device, const Mesh::FMeshData& MeshData, std::unordered_map<std::string, u32>& MaterialMap,
-			Comp::FSkeletonRenderData& Skeleton) -> Comp::FMeshRenderer
-		{
-			Comp::FMeshRenderer Result(ProcessMeshData(Device, MeshData, MaterialMap));
-			Result.ArgTableVert->setAddress(Skeleton.BindTransoformBuffer->gpuAddress(), 2);
-			Result.ArgTableVert->setAddress(Skeleton.PoseTransoformBuffer->gpuAddress(), 3);
-			Result.ResidencySet->addAllocation(Skeleton.BindTransoformBuffer.get());
-			Result.ResidencySet->addAllocation(Skeleton.PoseTransoformBuffer.get());
-			Result.ResidencySet->commit();
 			return Result;
 		}
 	} // namespace Metal
