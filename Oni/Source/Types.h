@@ -178,8 +178,8 @@ namespace Engine
 			u32 Stride;
 			std::vector<u8> Data; // raw index data
 
-			template <class Archive>
-			void Serialize(Archive& ar, const uint32_t version);
+			void serialize(cereal::JSONInputArchive& ar, const uint32_t version);
+			void serialize(cereal::JSONOutputArchive& ar, const uint32_t version);
 		};
 
 		struct FTexture
@@ -204,8 +204,8 @@ namespace Engine
 			bool DoubleSided = false;
 			std::string Name;
 
-			template <class Archive>
-			void Serialize(Archive& ar, const uint32_t version);
+			void serialize(cereal::JSONInputArchive& ar, const uint32_t version);
+			void serialize(cereal::JSONOutputArchive& ar, const uint32_t version);
 		};
 
 		struct FSubmeshData
@@ -214,8 +214,8 @@ namespace Engine
 			EPrimitiveType PrimitiveType;
 			u32 MaterialIndex;
 
-			template <class Archive>
-			void Serialize(Archive& ar, const uint32_t version);
+			void serialize(cereal::JSONInputArchive& ar, const uint32_t version);
+			void serialize(cereal::JSONOutputArchive& ar, const uint32_t version);
 		};
 
 		struct FMeshData
@@ -227,8 +227,8 @@ namespace Engine
 			std::string SkeletonName;
 			bool bHasSkeleton;
 
-			template <class Archive>
-			void Serialize(Archive& ar, const uint32_t version);
+			void serialize(cereal::JSONInputArchive& ar, const uint32_t version);
+			void serialize(cereal::JSONOutputArchive& ar, const uint32_t version);
 		};
 
 		struct FSkeleton

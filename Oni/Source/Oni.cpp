@@ -20,6 +20,7 @@
 
 #include <cstdarg>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <thread>
 
@@ -417,8 +418,21 @@ auto CreateDummyTexture(FGameState& State, const char* Name = "Dummy") -> MTL::R
 }
 
 auto LoadMesh(FGameState& State, MTL::Device* Device, std::vector<Engine::Mesh::FMeshData> Meshes, const char* Alias = nullptr,
-	std::vector<Engine::Mesh::FSkeleton> Skeletons = {}, std::vector<Engine::Mesh::FMaterial> Materials = {}, const char* RootPath = nullptr) -> void
+	std::vector<Engine::Mesh::FSkeleton> Skeletons = {}, std::vector<Engine::Mesh::FMaterial> Materials = {}, const char* RootPath = "meshes") -> void
 {
+	auto Root = std::filesystem::current_path() / ContentPath / "Assets";
+	if (RootPath)
+		Root /= RootPath;
+	if (Alias)
+		Root /= Alias;
+
+	std::error_code ec;
+	std::filesystem::create_directories(Root, ec);
+	if (ec)
+	{
+		std::cerr << "Failed: " << ec.message() << "\n";
+	}
+	
 	std::string MeshName;
 	for (u32 Idx = 0; Idx < Meshes.size(); Idx++)
 	{
@@ -431,6 +445,12 @@ auto LoadMesh(FGameState& State, MTL::Device* Device, std::vector<Engine::Mesh::
 			State.MeshesMap[Alias] = Index;
 			MeshName = Alias;
 		}
+
+		auto SavePath = Root / MeshName;
+		SavePath.replace_extension(".remesh.json");
+		std::ofstream os(SavePath);
+		auto Ar = cereal::JSONOutputArchive(os);
+		Ar(cereal::make_nvp(MeshName, Meshes[Idx]));
 	}
 
 	for (u32 Idx = 0; Idx < Skeletons.size(); Idx++)
@@ -452,28 +472,25 @@ auto LoadMesh(FGameState& State, MTL::Device* Device, std::vector<Engine::Mesh::
 		RenderMat.MetallicFactor = mat.MetallicFactor;
 		RenderMat.RoughnessFactor = mat.RoughnessFactor;
 
-		std::string Root = RootPath;
-		Root += "/";
-		Root += MeshName;
 		if (mat.BaseColorTex.Pixels.size())
 		{
-			SaveTexture(mat.BaseColorTex, Root.data(), mat.BaseColorTex.Name.data());
+			SaveTexture(mat.BaseColorTex, Root.c_str(), mat.BaseColorTex.Name.data());
 		}
 		if (mat.MetallicRoughnessTex.Pixels.size())
 		{
-			SaveTexture(mat.MetallicRoughnessTex, Root.data(), mat.MetallicRoughnessTex.Name.data());
+			SaveTexture(mat.MetallicRoughnessTex, Root.c_str(), mat.MetallicRoughnessTex.Name.data());
 		}
 		if (mat.NormalTex.Pixels.size())
 		{
-			SaveTexture(mat.NormalTex, Root.data(), mat.NormalTex.Name.data());
+			SaveTexture(mat.NormalTex, Root.c_str(), mat.NormalTex.Name.data());
 		}
 		if (mat.EmissiveTex.Pixels.size())
 		{
-			SaveTexture(mat.EmissiveTex, Root.data(), mat.EmissiveTex.Name.data());
+			SaveTexture(mat.EmissiveTex, Root.c_str(), mat.EmissiveTex.Name.data());
 		}
 		if (mat.OcclusionTex.Pixels.size())
 		{
-			SaveTexture(mat.OcclusionTex, Root.data(), mat.OcclusionTex.Name.data());
+			SaveTexture(mat.OcclusionTex, Root.c_str(), mat.OcclusionTex.Name.data());
 		}
 
 		State.Materials.emplace_back(RenderMat);
@@ -608,9 +625,9 @@ RE_API auto GameInitialize(FGameMemory& Memory) -> void
 	LoadMesh(State, State.Device, "meshes/samanosuke_weapons", "Tensou_lvl_3.obj", "Tensou");
 	LoadMesh(State, State.Device, "meshes", "mannequiny-0.3.0.glb", "Mannequiny");
 	auto Box = Engine::Mesh::mdl::LoadBox("Test Box", State.Device, glm::vec3(100.0f, 1.0f, 100.f), glm::uvec3(10, 1, 10));
-	LoadMesh(State, State.Device, { Box });
+	LoadMesh(State, State.Device, { Box }, Box.Name.c_str());
 	auto Capsule = Engine::Mesh::mdl::LoadCapsule("Test Capsule", State.Device, glm::vec3(0.25f, 1.75f, 0.25f), glm::uvec3(12, 4, 6));
-	LoadMesh(State, State.Device, { Capsule });
+	LoadMesh(State, State.Device, { Capsule }, Capsule.Name.c_str());
 
 	{
 		auto Sam = CreateEntity(State, State.Device, "Samanosuke"); // samanosuke
