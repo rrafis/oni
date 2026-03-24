@@ -541,6 +541,7 @@ auto GameModuleChanged(FGameModule& GameModule) -> bool
 	//                                                               Min,   Max,       Preffered
 	_metalDisplayLink.preferredFrameRateRange = CAFrameRateRangeMake(60.0f, _targetFPS, _targetFPS);
 
+#if RE_USE_SEPARATE_RENDER_THREAD
 	// Create a high-priority thread sets up the CAMetalDisplayLink callback and renders the game
 	int res = 0;
 	pthread_attr_t attr;
@@ -567,6 +568,11 @@ auto GameModuleChanged(FGameModule& GameModule) -> bool
 	
 	// Clean up transient objects:
 	pthread_attr_destroy( &attr );
+#else
+	// Attach directly to the main run loop
+	[_metalDisplayLink addToRunLoop:[NSRunLoop mainRunLoop]
+							forMode:NSDefaultRunLoopMode];
+#endif
 }
 
 - (void)addInputObservers
