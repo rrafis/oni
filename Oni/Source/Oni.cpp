@@ -563,12 +563,28 @@ auto LoadMesh2(FGameState& State, MTL::Device* Device, const std::filesystem::pa
 	{
 		auto Data = Engine::Mesh::gltf::LoadData(LoadPath.c_str());
 		Result = Engine::Mesh::gltf::LoadMeshView(Data);
+		Result.Name = LoadPath.filename().replace_extension();
 	}
 	else
 	{
 	}
 
 	return Result;
+}
+
+auto ImportMeshes(const Engine::Mesh::FMeshLoadView& MeshView, const std::filesystem::path& RootPath)
+{
+	switch (MeshView.Type)
+	{
+		case Engine::Mesh::FMeshLoadView::EPayloadType::GLTF:
+		{
+			Engine::Mesh::gltf::ImportMesh(MeshView, RootPath);
+			return;
+		}
+
+		default:
+			break;
+	}
 }
 
 auto UnloadMesh2(Engine::Mesh::FMeshLoadView& LoadView) -> void
@@ -707,6 +723,7 @@ void ShowFileList(FGameState& State, const std::filesystem::path& path, const st
 {
 	static std::filesystem::path selectedFile;
 	static Engine::Mesh::FMeshLoadView MeshData;
+	static std::string ImportRoot;
 	auto files = GetFilesWithExtensions(path, exts);
 
 	ImGui::Begin("File Picker");
@@ -725,15 +742,29 @@ void ShowFileList(FGameState& State, const std::filesystem::path& path, const st
 			selectedFile = file;
 			UnloadMesh2(MeshData);
 			MeshData = LoadMesh2(State, State.Device, selectedFile);
+			auto ContentRoot = std::filesystem::current_path() / ContentPath;
+			auto AssetRoot = std::filesystem::path("Assets") / std::filesystem::relative(selectedFile.parent_path(), ContentRoot);
+			ImportRoot = AssetRoot / MeshData.Name;
 		}
 	}
 
 	ImGui::EndChild();
 
+	ImGui::SetNextWindowSize(ImVec2(0.0f, 0.0f));
+	ImGui::SetNextWindowSizeConstraints(ImVec2(500.0f, 400.0f), ImVec2(FLT_MAX, 600.0f));
+	ImGui::SetNextWindowPos(ImGui::GetWindowPos() + ImVec2(ImGui::GetWindowWidth(), 0.0f), ImGuiCond_Once);
+	ImGui::Begin("Mesh Import");
 	if (std::filesystem::exists(selectedFile))
 	{
 		u32 Offset = 0;
 		u32 Idx = 0;
+
+		ImGui::InputText("Import Root directory", &ImportRoot, ImGuiInputTextFlags_CharsNoBlank);
+		ImGui::SameLine();
+		if (ImGui::Button("Import"))
+		{
+			ImportMeshes(MeshData, ImportRoot);
+		}
 		// Textures
 		{
 			ImGui::BeginChild("TexturesList", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_Borders);
@@ -794,6 +825,7 @@ void ShowFileList(FGameState& State, const std::filesystem::path& path, const st
 			ImGui::EndChild();
 		}
 	}
+	ImGui::End();
 
 	ImGui::End();
 }

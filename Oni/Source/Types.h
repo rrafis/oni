@@ -289,6 +289,7 @@ namespace Engine
 				MDL
 			};
 
+			std::string Name;
 			void* Payload;
 			EPayloadType Type;
 

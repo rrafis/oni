@@ -6,6 +6,8 @@
 
 #include <cgltf.h>
 
+#include <filesystem>
+
 namespace Engine::Mesh
 {
 	// Canonical semantics and data formats for portability
@@ -91,5 +93,6 @@ namespace Engine::Mesh
 		auto LoadMaterial(cgltf_data* Data) -> std::vector<Mesh::FMaterial>;
 
 		auto LoadMeshView(cgltf_data* Data) -> FMeshLoadView;
+		auto ImportMesh(const FMeshLoadView&, const std::filesystem::path&) -> void;
 	} // namespace gltf
 } // namespace Engine::Mesh

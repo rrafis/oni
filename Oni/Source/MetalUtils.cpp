@@ -15,6 +15,7 @@
 #include <cgltf.h>
 
 #include <stb_image.h>
+#include <stb_image_write.h>
 
 #include <filesystem>
 
@@ -1063,6 +1064,23 @@ namespace Engine::Mesh
 			Result.Meshes = LoadMeshView(Data, SkViewMap, MatViewMap);
 
 			return Result;
+		}
+
+		auto ImportMesh(const FMeshLoadView& View, const std::filesystem::path& RootPath) -> void
+		{
+			namespace fs = std::filesystem;
+
+			std::error_code ec;
+			fs::create_directories(RootPath, ec);
+			if (ec)
+				std::cerr << "Failed: " << ec.message() << "\n";
+
+			for (auto& Texture : View.Textures)
+			{
+				fs::path AssetPath = RootPath / Texture.Name;
+				AssetPath.replace_extension(".png");
+				stbi_write_png(AssetPath.c_str(), Texture.Width, Texture.Height, Texture.Channels, Texture.Payload, Texture.Width * Texture.Channels);
+			}
 		}
 	} // namespace gltf
 } // namespace Engine::Mesh
