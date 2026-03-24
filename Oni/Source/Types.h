@@ -238,6 +238,65 @@ namespace Engine
 			std::vector<std::string> JointNames;
 			std::string Name;
 		};
+
+		struct FTextureView
+		{
+			u32 Width, Height, Channels;
+			std::string Name;
+			void* Payload;
+			usize Size;
+		};
+
+		struct FMaterialView
+		{
+			glm::vec4 BaseColorFactor = { 1, 1, 1, 1 };
+			f32 MetallicFactor = 1.0f;
+			f32 RoughnessFactor = 1.0f;
+			glm::vec4 EmissiveFactor = { 0, 0, 0, 0 };
+			i32 BaseColorTex;
+			i32 MetallicRoughnessTex;
+			i32 NormalTex;
+			i32 EmissiveTex;
+			i32 OcclusionTex;
+			bool DoubleSided = false;
+			std::string Name;
+		};
+
+		struct FSkeletonView
+		{
+			std::string Name;
+			void* Payload;
+		};
+
+		struct FMeshView
+		{
+			struct FSubmeshView
+			{
+				u32 MaterialIndex;
+			};
+			std::vector<FSubmeshView> Submeshes;
+			i32 SkeletonIndex;
+			std::string Name;
+			void* MeshPayload;
+			void* SkinPayload;
+		};
+
+		struct FMeshLoadView
+		{
+			enum class EPayloadType
+			{
+				GLTF,
+				MDL
+			};
+
+			void* Payload;
+			EPayloadType Type;
+
+			std::vector<FTextureView> Textures;
+			std::vector<FMaterialView> Materials;
+			std::vector<FSkeletonView> Skeletons;
+			std::vector<FMeshView> Meshes;
+		};
 	} // namespace Mesh
 
 	namespace Transform

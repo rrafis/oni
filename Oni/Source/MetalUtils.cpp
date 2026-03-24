@@ -16,6 +16,8 @@
 
 #include <stb_image.h>
 
+#include <filesystem>
+
 namespace Engine::Mesh
 {
 	namespace Metal
@@ -823,6 +825,244 @@ namespace Engine::Mesh
 			}
 
 			return Tex;
+		}
+
+		auto GetImageData(void* image_data, usize image_size) -> FTextureView
+		{
+			stbi_set_flip_vertically_on_load(true);
+
+			int width, height, channels;
+			unsigned char* data = stbi_load_from_memory((stbi_uc*)image_data, image_size, &width, &height, &channels, 4);
+
+			// ASSERT(data);
+
+			FTextureView Result;
+			Result.Payload = data;
+			Result.Width = width;
+			Result.Height = height;
+			Result.Channels = 4;
+			Result.Size = Result.Width * Result.Height * Result.Channels;
+
+			return Result;
+		}
+
+		auto GetImageData(const char* path) -> FTextureView
+		{
+			stbi_set_flip_vertically_on_load(true);
+
+			int width, height, channels;
+			unsigned char* data = stbi_load(path, &width, &height, &channels, 4);
+			channels = 4;
+
+			// ASSERT(data);
+
+			FTextureView Result;
+			Result.Payload = data;
+			Result.Width = width;
+			Result.Height = height;
+			Result.Channels = 4;
+			Result.Size = Result.Width * Result.Height * Result.Channels;
+
+			return Result;
+		}
+
+		auto GetTextureView(const cgltf_image& Image, const std::string& Alias) -> FTextureView
+		{
+			// Copy texture paths
+			auto GetTextureName = [](const cgltf_image& image, const std::string& alias) -> std::string {
+				if (image.name)
+					return image.name;
+				if (image.uri)
+				{
+					std::filesystem::path p(image.uri);
+					return p.filename();
+				}
+				return alias;
+			};
+
+			void* data = nullptr;
+			if (Image.uri && !Image.buffer_view)
+			{
+				auto Result = GetImageData(Image.uri);
+				Result.Name = GetTextureName(Image, Alias);
+				return Result;
+			}
+			else if (Image.buffer_view)
+			{
+				cgltf_buffer_view* view = Image.buffer_view;
+				usize size = view->size;
+				data = malloc(size);
+				if (data)
+				{
+					memcpy(data, (char*)view->buffer->data + view->offset, size);
+				}
+				auto Result = GetImageData(data, size);
+				Result.Name = GetTextureName(Image, Alias);
+				free(data);
+				return Result;
+			}
+			else if (Image.uri && Image.mime_type)
+			{
+				char* base64_data = strchr(Image.uri, ',');
+				if (!base64_data)
+					return FTextureView();
+				base64_data++; // Skip the comma
+
+				usize size = cgltf_decode_string(base64_data);
+				if (size == 0)
+					return FTextureView();
+
+				FTextureView Result;
+				cgltf_options options{};
+				if (!(cgltf_load_buffer_base64(&options, size, base64_data, &data) != cgltf_result_success))
+				{
+					auto Result = GetImageData(data, size);
+					Result.Name = GetTextureName(Image, Alias);
+					cgltf_default_free(nullptr, data);
+				}
+				return Result;
+			}
+
+			return FTextureView();
+		}
+
+		using FTextureViewMap = std::unordered_map<const cgltf_image*, u32>;
+		using FMaterialViewMap = std::unordered_map<const cgltf_material*, u32>;
+		using FSkeletonViewMap = std::unordered_map<const cgltf_skin*, u32>;
+
+		static auto LoadTextureView(cgltf_data* Data, FTextureViewMap& Map) -> std::vector<Mesh::FTextureView>
+		{
+			std::vector<Mesh::FTextureView> Result;
+			Result.reserve(Data->images_count);
+
+			for (u32 Idx = 0; Idx < Data->images_count; Idx++)
+			{
+				const cgltf_image& Image = Data->images[Idx];
+				Map[&Image] = Idx;
+				Result.emplace_back(GetTextureView(Image, std::format("Image_{}", Idx)));
+			}
+
+			return Result;
+		}
+
+		static auto GetMaterialView(const cgltf_material& SrcMat, const FTextureViewMap& TextureMap, const std::string Alias) -> Mesh::FMaterialView
+		{
+			auto RetriveTextureViewIndex = [](const FTextureViewMap& Map, const cgltf_texture_view* View) -> i32 {
+				if (!View || !View->texture || !View->texture->image)
+					return -1;
+				if (!Map.contains(View->texture->image))
+					return -1;
+				return Map.at(View->texture->image);
+			};
+
+			Mesh::FMaterialView Result{};
+
+			const cgltf_pbr_metallic_roughness& PBR = SrcMat.pbr_metallic_roughness;
+			memcpy(&Result.BaseColorFactor.r, PBR.base_color_factor, sizeof(f32) * 4);
+			Result.MetallicFactor = PBR.metallic_factor;
+			Result.RoughnessFactor = PBR.roughness_factor;
+			memcpy(&Result.EmissiveFactor.r, SrcMat.emissive_factor, sizeof(f32) * 3);
+
+			Result.BaseColorTex = RetriveTextureViewIndex(TextureMap, &PBR.base_color_texture);
+			Result.MetallicRoughnessTex = RetriveTextureViewIndex(TextureMap, &PBR.metallic_roughness_texture);
+			Result.NormalTex = RetriveTextureViewIndex(TextureMap, &SrcMat.normal_texture);
+			Result.EmissiveTex = RetriveTextureViewIndex(TextureMap, &SrcMat.emissive_texture);
+			Result.OcclusionTex = RetriveTextureViewIndex(TextureMap, &SrcMat.occlusion_texture);
+
+			// Other properties
+			Result.DoubleSided = SrcMat.double_sided;
+			Result.Name = SrcMat.name ? SrcMat.name : Alias;
+
+			return Result;
+		}
+
+		static auto LoadMaterialView(cgltf_data* Data, FMaterialViewMap& Map, const FTextureViewMap& TextureMap) -> std::vector<Mesh::FMaterialView>
+		{
+			std::vector<Mesh::FMaterialView> Result;
+			Result.reserve(Data->materials_count);
+
+			for (u32 Idx = 0; Idx < Data->materials_count; Idx++)
+			{
+				const cgltf_material& SrcMat = Data->materials[Idx];
+				Map[&SrcMat] = Idx;
+				Result.emplace_back(GetMaterialView(SrcMat, TextureMap, std::format("Material_{}", Idx)));
+			}
+
+			return Result;
+		}
+
+		static auto LoadSkeletonView(cgltf_data* Data, FSkeletonViewMap& Map) -> std::vector<Mesh::FSkeletonView>
+		{
+			std::vector<Mesh::FSkeletonView> Result;
+			Result.reserve(Data->skins_count);
+
+			for (u32 Idx = 0; Idx < Data->skins_count; Idx++)
+			{
+				const cgltf_skin& Skin = Data->skins[Idx];
+				Map[&Skin] = Idx;
+				Result.emplace_back(Mesh::FSkeletonView{ .Name = Skin.name ? Skin.name : std::format("Skeleton_{}", Idx), .Payload = (void*)(&Skin) });
+			}
+
+			return Result;
+		}
+
+		static auto GetMeshView(const cgltf_node& Node, cgltf_data* Data, const FSkeletonViewMap& SkeletonMap, const FMaterialViewMap& MaterialMap,
+			const std::string& Alias) -> Mesh::FMeshView
+		{
+			Mesh::FMeshView Result{};
+			Result.MeshPayload = (void*)Node.mesh;
+			Result.SkinPayload = (void*)Node.skin;
+			Result.Name = Node.mesh->name ? Node.mesh->name : Alias;
+			Result.SkeletonIndex = SkeletonMap.contains(Node.skin) ? SkeletonMap.at(Node.skin) : -1;
+
+			u32 numPrims = Node.mesh->primitives_count;
+			Result.Submeshes.reserve(numPrims);
+			for (u32 PrimIdx = 0; PrimIdx < numPrims; PrimIdx++)
+			{
+				auto& primitive = Node.mesh->primitives[PrimIdx];
+				// TODO: assert MaterialMap.contains(primitive->material)
+				Result.Submeshes.emplace_back(Mesh::FMeshView::FSubmeshView{ .MaterialIndex = MaterialMap.at(primitive.material) });
+			}
+
+			return Result;
+		}
+
+		static auto LoadMeshView(cgltf_data* Data, FSkeletonViewMap& SkeletonMap, FMaterialViewMap& MaterialMap) -> std::vector<Mesh::FMeshView>
+		{
+			std::vector<Mesh::FMeshView> Result;
+			Result.reserve(Data->meshes_count);
+
+			u32 NodeCount = Data->nodes_count;
+			for (u32 Idx = 0; Idx < NodeCount; Idx++)
+			{
+				auto& Node = Data->nodes[Idx];
+				if (Node.mesh == 0)
+				{
+					continue;
+				}
+
+				Result.emplace_back(GetMeshView(Node, Data, SkeletonMap, MaterialMap, std::format("Mesh_{}", Idx)));
+			}
+
+			return Result;
+		}
+
+		auto LoadMeshView(cgltf_data* Data) -> FMeshLoadView
+		{
+			FMeshLoadView Result;
+
+			Result.Payload = (void*)Data;
+			Result.Type = FMeshLoadView::EPayloadType::GLTF;
+
+			FTextureViewMap TexViewMap;
+			FMaterialViewMap MatViewMap;
+			FSkeletonViewMap SkViewMap;
+			Result.Textures = LoadTextureView(Data, TexViewMap);
+			Result.Materials = LoadMaterialView(Data, MatViewMap, TexViewMap);
+			Result.Skeletons = LoadSkeletonView(Data, SkViewMap);
+			Result.Meshes = LoadMeshView(Data, SkViewMap, MatViewMap);
+
+			return Result;
 		}
 	} // namespace gltf
 } // namespace Engine::Mesh

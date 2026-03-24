@@ -550,6 +550,254 @@ auto CreateEntity(FGameState& State, MTL::Device* Device, const std::string& Mes
 	return entt::handle(State.Registry, ent);
 }
 
+auto LoadMesh2(FGameState& State, MTL::Device* Device, const std::filesystem::path& LoadPath) -> Engine::Mesh::FMeshLoadView
+{
+	auto ext = LoadPath.extension();
+	if (!LoadPath.has_extension())
+	{
+		return {};
+	}
+
+	Engine::Mesh::FMeshLoadView Result;
+	if (LoadPath.extension() == ".gltf" || LoadPath.extension() == ".glb")
+	{
+		auto Data = Engine::Mesh::gltf::LoadData(LoadPath.c_str());
+		Result = Engine::Mesh::gltf::LoadMeshView(Data);
+	}
+	else
+	{
+	}
+
+	return Result;
+}
+
+auto UnloadMesh2(Engine::Mesh::FMeshLoadView& LoadView) -> void
+{
+	if (!LoadView.Payload)
+	{
+		return;
+	}
+
+	switch (LoadView.Type)
+	{
+		case Engine::Mesh::FMeshLoadView::EPayloadType::GLTF:
+		{
+			for (auto& TexView : LoadView.Textures)
+			{
+				stbi_image_free(TexView.Payload);
+			}
+			Engine::Mesh::gltf::FreeData((cgltf_data*)LoadView.Payload);
+			break;
+		}
+
+		case Engine::Mesh::FMeshLoadView::EPayloadType::MDL:
+		{
+			Engine::Mesh::mdl::FreeData(LoadView.Payload);
+			break;
+		}
+
+		default:
+			break;
+	}
+}
+
+auto ShowTextureView(Engine::Mesh::FTextureView& Texture, u32 Idx) -> void
+{
+	ImGui::PushID(Idx);
+
+	ImGui::InputText(std::format("Texture Name##{}", Idx).data(), &Texture.Name, ImGuiInputTextFlags_CharsNoBlank);
+	ImGui::Text("%s", std::format("    Width:     {}", Texture.Width).data());
+	ImGui::Text("%s", std::format("    Height:    {}", Texture.Height).data());
+	ImGui::Text("%s", std::format("    Channels:  {}", Texture.Channels).data());
+
+	ImGui::PopID();
+}
+
+auto ShowMaterialView(Engine::Mesh::FMaterialView& Material, const std::vector<Engine::Mesh::FTextureView>& Textures, u32 Idx) -> void
+{
+	ImGui::PushID(Idx);
+
+	// Editable material name
+	ImGui::InputText(std::format("Material Name##{}", Idx).data(), &Material.Name, ImGuiInputTextFlags_CharsNoBlank);
+
+	// Base color factor
+	ImGui::ColorEdit4("Base Color", &Material.BaseColorFactor[0]);
+
+	// Metallic & Roughness
+	ImGui::SliderFloat("Metallic", &Material.MetallicFactor, 0.0f, 1.0f);
+	ImGui::SliderFloat("Roughness", &Material.RoughnessFactor, 0.0f, 1.0f);
+
+	// Emissive factor
+	ImGui::ColorEdit4("Emissive", &Material.EmissiveFactor[0]);
+
+	// Double sided toggle
+	ImGui::Checkbox("Double Sided", &Material.DoubleSided);
+
+	ImGui::Separator();
+	ImGui::Text("Textures:");
+
+	// For each texture, only show/edit its name
+	if (Material.BaseColorTex >= 0 && Material.BaseColorTex < Textures.size())
+		ImGui::Text("%s", std::format("BaseColorTex: {}", Textures[Material.BaseColorTex].Name).data());
+	if (Material.MetallicRoughnessTex >= 0 && Material.MetallicRoughnessTex < Textures.size())
+		ImGui::Text("%s", std::format("MetallicRoughnessTex: {}", Textures[Material.MetallicRoughnessTex].Name).data());
+	if (Material.NormalTex >= 0 && Material.NormalTex < Textures.size())
+		ImGui::Text("%s", std::format("NormalTex: {}", Textures[Material.NormalTex].Name).data());
+	if (Material.EmissiveTex >= 0 && Material.EmissiveTex < Textures.size())
+		ImGui::Text("%s", std::format("EmissiveTex: {}", Textures[Material.EmissiveTex].Name).data());
+	if (Material.OcclusionTex >= 0 && Material.OcclusionTex < Textures.size())
+		ImGui::Text("%s", std::format("OcclusionTex: {}", Textures[Material.OcclusionTex].Name).data());
+
+	ImGui::PopID();
+}
+
+auto ShowSkeletonView(Engine::Mesh::FSkeletonView& Skeleton, u32 Idx) -> void
+{
+	ImGui::PushID(Idx);
+
+	ImGui::InputText(std::format("Skeleton Name##{}", Idx).data(), &Skeleton.Name, ImGuiInputTextFlags_CharsNoBlank);
+
+	ImGui::PopID();
+}
+
+auto ShowMeshView(Engine::Mesh::FMeshView& Mesh, const std::vector<Engine::Mesh::FSkeletonView>& Skeletons,
+	const std::vector<Engine::Mesh::FMaterialView>& Materials, u32 Idx)
+{
+	ImGui::PushID(Idx);
+
+	ImGui::InputText(std::format("Mesh Name##{}", Idx).data(), &Mesh.Name, ImGuiInputTextFlags_CharsNoBlank);
+
+	if (Mesh.SkeletonIndex >= 0 && Mesh.SkeletonIndex < Skeletons.size())
+	{
+		ImGui::Text("%s", std::format("Skeleton: {}", Skeletons[Mesh.SkeletonIndex].Name).data());
+	}
+
+	for (u32 SubIdx = 0; SubIdx < Mesh.Submeshes.size(); SubIdx++)
+	{
+		ImGui::PushID(Idx);
+		auto& Submesh = Mesh.Submeshes[SubIdx];
+		if (Submesh.MaterialIndex >= 0 && Submesh.MaterialIndex < Materials.size())
+		{
+			ImGui::Text("%s", std::format("Material: {}", Materials[Submesh.MaterialIndex].Name).data());
+		}
+		ImGui::PopID();
+	}
+
+	ImGui::PopID();
+}
+
+auto GetFilesWithExtensions(const std::filesystem::path& path, const std::set<std::string>& exts) -> std::vector<std::filesystem::path>
+{
+	std::vector<std::filesystem::path> files;
+	for (const auto& entry : std::filesystem::recursive_directory_iterator(path))
+	{
+		if (entry.is_regular_file())
+		{
+			std::string ext = entry.path().extension().string();
+			if (exts.find(ext) != exts.end())
+			{
+				files.push_back(entry.path());
+			}
+		}
+	}
+	return files;
+}
+
+void ShowFileList(FGameState& State, const std::filesystem::path& path, const std::set<std::string>& exts)
+{
+	static std::filesystem::path selectedFile;
+	static Engine::Mesh::FMeshLoadView MeshData;
+	auto files = GetFilesWithExtensions(path, exts);
+
+	ImGui::Begin("File Picker");
+
+	ImGui::Text("Files in %s:", path.c_str());
+	ImGui::Separator();
+
+	// Scrollable region for long lists
+	ImGui::BeginChild("FileList", ImVec2(0, 300), true);
+
+	for (const auto& file : files)
+	{
+		std::filesystem::path rel = std::filesystem::relative(file, path);
+		if (ImGui::Selectable(rel.c_str(), selectedFile == file))
+		{
+			selectedFile = file;
+			UnloadMesh2(MeshData);
+			MeshData = LoadMesh2(State, State.Device, selectedFile);
+		}
+	}
+
+	ImGui::EndChild();
+
+	if (std::filesystem::exists(selectedFile))
+	{
+		u32 Offset = 0;
+		u32 Idx = 0;
+		// Textures
+		{
+			ImGui::BeginChild("TexturesList", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_Borders);
+			ImGui::Text("Textures:");
+			Idx = 0;
+			for (auto& Texture : MeshData.Textures)
+			{
+				ImGui::BeginChild(std::format("TextureProperties_{}", Idx).data(), ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_Borders);
+				ShowTextureView(Texture, Idx);
+				ImGui::EndChild();
+				Idx++;
+			}
+			Offset += MeshData.Textures.size();
+			ImGui::EndChild();
+		}
+		// Materials
+		{
+			ImGui::BeginChild("MaterialsList", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_Borders);
+			ImGui::Text("Materials:");
+			Idx = 0;
+			for (auto& Material : MeshData.Materials)
+			{
+				ImGui::BeginChild(std::format("MaterialProperties_{}", Idx).data(), ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_Borders);
+				ShowMaterialView(Material, MeshData.Textures, Idx);
+				ImGui::EndChild();
+				Idx++;
+			}
+			Offset += MeshData.Materials.size();
+			ImGui::EndChild();
+		}
+		// Skeletons
+		{
+			ImGui::BeginChild("SkeletonsList", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_Borders);
+			ImGui::Text("Skeletons:");
+			Idx = 0;
+			for (auto& Skeleton : MeshData.Skeletons)
+			{
+				ImGui::BeginChild(std::format("SkeletonProperties_{}", Idx).data(), ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_Borders);
+				ShowSkeletonView(Skeleton, Idx);
+				ImGui::EndChild();
+				Idx++;
+			}
+			Offset += MeshData.Skeletons.size();
+			ImGui::EndChild();
+		}
+		// Meshes
+		{
+			ImGui::BeginChild("MeshesList", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_Borders);
+			ImGui::Text("Meshes:");
+			Idx = 0;
+			for (auto& Mesh : MeshData.Meshes)
+			{
+				ImGui::BeginChild(std::format("Mesh_{}", Idx).data(), ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_Borders);
+				ShowMeshView(Mesh, MeshData.Skeletons, MeshData.Materials, Idx);
+				ImGui::EndChild();
+				Idx++;
+			}
+			ImGui::EndChild();
+		}
+	}
+
+	ImGui::End();
+}
+
 static FGameSurfaceDesc Props;
 RE_API auto GameGetSurfaceDesc() -> FGameSurfaceDesc*
 {
@@ -624,7 +872,6 @@ RE_API auto GameInitialize(FGameMemory& Memory) -> void
 		State.Materials.emplace_back(RenderMat);
 	}
 
-	LoadMesh(State, State.Device, "meshes", "DamagedHelmet.glb", "DamagedHelmet");
 	LoadMesh(State, State.Device, "meshes/samanosuke_future", "Future_Samanosuke.obj", "Samanosuke");
 	LoadMesh(State, State.Device, "meshes/samanosuke_weapons", "Tensou_lvl_3.obj", "Tensou");
 	LoadMesh(State, State.Device, "meshes", "mannequiny-0.3.0.glb", "Mannequiny");
@@ -938,7 +1185,8 @@ RE_API auto GameUpdateAndRender(FGameMemory& Memory, f32 DeltaTime, FOffscreenBu
 
 	ImGui::Mac::BeginFrame(State.DrawableRenderPass.get(), Memory.Window, State.Width, State.Height);
 
-	ImGui::ShowDemoWindow();
+	// TEMP: Testing mesh importer via ImGui
+	ShowFileList(State, std::filesystem::current_path() / ContentPath / "meshes", { ".glb", ".obj" });
 
 	// Player movement is handled by PlayerController module
 	PlayerCtrl::Update(State.PhysicsSystem, State.PlayerCapsuleID, Gamepad, DeltaTime, State.CameraYaw);

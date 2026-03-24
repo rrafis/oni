@@ -1,8 +1,10 @@
 #include "Platform.h"
 
+#define IMGUI_DEFINE_MATH_OPERATORS
 #include <backends/imgui_impl_metal.h>
 #include <backends/imgui_impl_osx.h>
 #include <imgui.h>
+#include <misc/cpp/imgui_stdlib.h>
 
 #include <Metal/Metal.hpp>
 
@@ -60,4 +62,4 @@ namespace ImGui::Mac
 		ImGui_ImplMetal_RenderDrawData(draw_data, MetalCommandBuffer, MetalEncoder, Options);
 		MetalEncoder->popDebugGroup();
 	}
-} // namespace Utils
+} // namespace ImGui::Mac

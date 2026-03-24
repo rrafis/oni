@@ -89,5 +89,7 @@ namespace Engine::Mesh
 		auto LoadMesh(cgltf_data* Data) -> std::vector<Mesh::FMeshData>;
 		auto LoadSkeleton(cgltf_data* Data) -> std::vector<Mesh::FSkeleton>;
 		auto LoadMaterial(cgltf_data* Data) -> std::vector<Mesh::FMaterial>;
+
+		auto LoadMeshView(cgltf_data* Data) -> FMeshLoadView;
 	} // namespace gltf
 } // namespace Engine::Mesh
