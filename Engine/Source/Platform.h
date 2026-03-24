@@ -107,4 +107,6 @@ struct FGameMemory
 
 	u64 TempStorageSize;
 	void* TempStorage;
+
+	void* Window;
 };

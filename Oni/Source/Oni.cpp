@@ -4,6 +4,8 @@
 
 #include "Types.h"
 
+#include "ImGui.inl"
+
 #include "Serealization.inl"
 
 #define STB_IMAGE_IMPLEMENTATION
@@ -432,7 +434,7 @@ auto LoadMesh(FGameState& State, MTL::Device* Device, std::vector<Engine::Mesh::
 	{
 		std::cerr << "Failed: " << ec.message() << "\n";
 	}
-	
+
 	std::string MeshName;
 	for (u32 Idx = 0; Idx < Meshes.size(); Idx++)
 	{
@@ -580,6 +582,8 @@ RE_API auto GameInitialize(FGameMemory& Memory) -> void
 	State.ResidencySet = NS::TransferPtr(State.Device->newResidencySet(ResidencySetDesc, nullptr));
 
 	State.DummyTexture = CreateDummyTexture(State);
+
+	ImGui::Mac::Init(State.Device, Memory.Window);
 
 	// Depth
 	{
@@ -909,6 +913,12 @@ RE_API auto GameUpdateAndRender(FGameMemory& Memory, f32 DeltaTime, FOffscreenBu
 	}
 
 	CA::MetalDrawable* Drawable = (CA::MetalDrawable*)Buffer.Drawable;
+	{
+		State.DrawableRenderPass->colorAttachments()->object(0)->setTexture(Drawable->texture());
+		State.DrawableRenderPass->colorAttachments()->object(0)->setClearColor(MTL::ClearColor::Make(0.08, 0.18, 0.8, 1.0));
+		State.DrawableRenderPass->colorAttachments()->object(0)->setLoadAction(MTL::LoadActionClear);
+		State.DrawableRenderPass->colorAttachments()->object(0)->setStoreAction(MTL::StoreActionStore);
+	}
 
 	if (Drawable->texture()->width() != State.Width || Drawable->texture()->height() != State.Height)
 	{
@@ -925,6 +935,11 @@ RE_API auto GameUpdateAndRender(FGameMemory& Memory, f32 DeltaTime, FOffscreenBu
 
 		State.Projection = glm::perspectiveFov(glm::radians(State.FOV), (f32)State.Width, (f32)State.Height, 0.01f, 1000.0f);
 	}
+
+	ImGui::Mac::BeginFrame(State.DrawableRenderPass.get(), Memory.Window, State.Width, State.Height);
+
+	ImGui::ShowDemoWindow();
+
 	// Player movement is handled by PlayerController module
 	PlayerCtrl::Update(State.PhysicsSystem, State.PlayerCapsuleID, Gamepad, DeltaTime, State.CameraYaw);
 
@@ -1000,6 +1015,7 @@ RE_API auto GameUpdateAndRender(FGameMemory& Memory, f32 DeltaTime, FOffscreenBu
 
 	State.Capsule->Position = State.Player->Position + glm::vec3(0.0f, 0.875f, 0.0f);
 
+	MTL4::CommitOptions* CommitOptions = MTL4::CommitOptions::alloc()->init();
 	MTL4::CommandBuffer* Cmd = State.Device->newCommandBuffer();
 	Cmd->beginCommandBuffer(State.Allocator.get());
 	Cmd->useResidencySet(State.ResidencySet.get());
@@ -1015,11 +1031,6 @@ RE_API auto GameUpdateAndRender(FGameMemory& Memory, f32 DeltaTime, FOffscreenBu
 	}
 
 	{
-		State.DrawableRenderPass->colorAttachments()->object(0)->setTexture(Drawable->texture());
-		State.DrawableRenderPass->colorAttachments()->object(0)->setClearColor(MTL::ClearColor::Make(0.08, 0.18, 0.8, 1.0));
-		State.DrawableRenderPass->colorAttachments()->object(0)->setLoadAction(MTL::LoadActionClear);
-		State.DrawableRenderPass->colorAttachments()->object(0)->setStoreAction(MTL::StoreActionStore);
-
 		MTL4::RenderCommandEncoder* Encoder = Cmd->renderCommandEncoder(State.DrawableRenderPass.get());
 		Encoder->setRenderPipelineState(State.Pipeline.get());
 		Encoder->setDepthStencilState(State.DepthStencilState);
@@ -1072,13 +1083,18 @@ RE_API auto GameUpdateAndRender(FGameMemory& Memory, f32 DeltaTime, FOffscreenBu
 			}
 		}
 
+		{
+			Encoder->setLabel(NS::String::string("ImGui Pass", NS::UTF8StringEncoding));
+			ImGui::Mac::EndFrame(Cmd, Encoder, CommitOptions);
+		}
+
 		Encoder->endEncoding();
 	}
 
 	Cmd->endCommandBuffer();
 	std::vector<MTL4::CommandBuffer*> CmdBuffers = { Cmd };
 	State.Queue->wait(Drawable);
-	State.Queue->commit(CmdBuffers.data(), CmdBuffers.size());
+	State.Queue->commit(CmdBuffers.data(), CmdBuffers.size(), CommitOptions);
 	State.Queue->signalDrawable(Drawable);
 	Drawable->present();
 

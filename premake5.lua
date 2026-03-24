@@ -55,6 +55,9 @@ workspace "RE"
 		}
 	filter {}
 
+THIRD_PARTY_DIR = "%{wks.location}/ThirdParty"
+
+include "ThirdParty/imgui/imgui.premake5.lua"
 include "ThirdParty/cereal/cereal.premake5.lua"
 include "ThirdParty/cgltf/cgltf.premake5.lua"
 include "ThirdParty/Jolt/Jolt.premake5.lua"

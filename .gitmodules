@@ -13,3 +13,6 @@
 [submodule "ThirdParty/cereal/cereal"]
 	path = ThirdParty/cereal/cereal
 	url = git@github.com:USCiLab/cereal.git
+[submodule "ThirdParty/imgui/imgui"]
+	path = ThirdParty/imgui/imgui
+	url = git@github.com:rrafis/imgui.git

@@ -421,6 +421,8 @@ auto GameModuleChanged(FGameModule& GameModule) -> bool
 	_gameMemory.PermanentStorage = (void*)addr;
 	_gameMemory.TempStorage = (void*)(addr + _gameMemory.PermanentStorageSize);
 
+	_gameMemory.Window = (void*)_view;
+
 	_gameModule.GameInitialize(_gameMemory);
 
 	// NOTE: Before game starts calculate delta time for the very first frame,

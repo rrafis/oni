@@ -24,6 +24,7 @@ project "Oni"
 
 	linkCgltf()
 	linkCereal()
+	linkImGui()
 
 	externalincludedirs {
 		"%{wks.location}/ThirdParty/entt/src",
