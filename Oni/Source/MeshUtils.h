@@ -2,6 +2,8 @@
 
 #include "Types.h"
 
+#include "Vfs.h"
+
 #include <Metal/Metal.hpp>
 
 #include <cgltf.h>
@@ -93,6 +95,6 @@ namespace Engine::Mesh
 		auto LoadMaterial(cgltf_data* Data) -> std::vector<Mesh::FMaterial>;
 
 		auto LoadMeshView(cgltf_data* Data) -> FMeshLoadView;
-		auto ImportMesh(const FMeshLoadView&, const std::filesystem::path&) -> void;
+		auto ImportMesh(const FMeshLoadView&, const vfs::Path&) -> void;
 	} // namespace gltf
 } // namespace Engine::Mesh

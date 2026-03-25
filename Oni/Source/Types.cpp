@@ -165,27 +165,16 @@ namespace Engine::Transform
 
 namespace Engine::Asset
 {
-	auto MakeAssetRef(EAssetType Type, const std::filesystem::path& InputPath) -> FAssetRef
+	auto MakeAssetRef(EAssetType Type, const vfs::Path& InputPath) -> FAssetRef
 	{
-		FAssetRef ref;
+		FAssetRef Result;
 
-		std::filesystem::path ContentRoot = Platform::GetResourcesPath();
-		std::filesystem::path FullPath = std::filesystem::weakly_canonical(InputPath.is_absolute() ? InputPath : (ContentRoot / InputPath));
-
-		auto rel = FullPath.lexically_relative(ContentRoot);
-		if (rel.empty() || rel.native()[0] == '.') // not inside ContentRoot
+		if (!InputPath.Exists())
 		{
-			ref.Type = EAssetType::Invalid;
-			ref.Name.clear();
-			ref.Path.clear();
-			return ref;
+			return {};
 		}
 
-		ref.Type = Type;
-		ref.Path = "content://" + std::filesystem::relative(FullPath, ContentRoot).string();
-		ref.Name = FullPath.filename().replace_extension();
-
-		return ref;
+		return { .Type = Type, .Name = InputPath.ReplaceExtension().Filename(), .Path = InputPath };
 	}
 
 	auto FDataStream::Size() -> usize

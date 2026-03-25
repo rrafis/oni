@@ -1067,19 +1067,11 @@ namespace Engine::Mesh
 			return Result;
 		}
 
-		auto ImportMesh(const FMeshLoadView& View, const std::filesystem::path& RootPath) -> void
+		auto ImportMesh(const FMeshLoadView& View, const vfs::Path& RootPath) -> void
 		{
-			namespace fs = std::filesystem;
-
-			std::error_code ec;
-			fs::create_directories(RootPath, ec);
-			if (ec)
-				std::cerr << "Failed: " << ec.message() << "\n";
-
 			for (auto& Texture : View.Textures)
 			{
-				fs::path AssetPath = RootPath / Texture.Name;
-				AssetPath.replace_extension(".png");
+				auto AssetPath = (RootPath / Texture.Name).ReplaceExtension(".png").Create();
 
 				Asset::FTexture TexAsset;
 				TexAsset.Width = Texture.Width;
@@ -1091,8 +1083,10 @@ namespace Engine::Mesh
 				TexAsset.Pixels.Data.resize(TexAsset.Pixels.Count * TexAsset.Pixels.Stride);
 				memcpy(TexAsset.Pixels.Data.data(), Texture.Payload, Texture.Size);
 
-				stbi_write_png(AssetPath.c_str(), TexAsset.Width, TexAsset.Height, TexAsset.Channels, TexAsset.Pixels.Data.data(), TexAsset.Pixels.Stride);
-				AssetPath.replace_extension(".retex");
+				stbi_write_png(
+					AssetPath.Resolve().c_str(), TexAsset.Width, TexAsset.Height, TexAsset.Channels, TexAsset.Pixels.Data.data(), TexAsset.Pixels.Stride);
+
+				AssetPath = AssetPath.ReplaceExtension(".retex").Create();
 				std::ofstream OutStream(AssetPath);
 				cereal::JSONOutputArchive OutArchive(OutStream);
 				OutArchive(cereal::make_nvp(Texture.Name, TexAsset));
@@ -1109,36 +1103,35 @@ namespace Engine::Mesh
 				if (Material.BaseColorTex >= 0 && Material.BaseColorTex < View.Textures.size())
 				{
 					auto& Texture = View.Textures[Material.BaseColorTex];
-					auto TexAssetPath = (RootPath / Texture.Name).replace_extension(".retex");
+					auto TexAssetPath = (RootPath / Texture.Name).ReplaceExtension(".retex");
 					MatAsset.BaseColorTex = Asset::MakeAssetRef(Asset::EAssetType::Texture, TexAssetPath);
 				}
 				if (Material.MetallicRoughnessTex >= 0 && Material.MetallicRoughnessTex < View.Textures.size())
 				{
 					auto& Texture = View.Textures[Material.MetallicRoughnessTex];
-					auto TexAssetPath = (RootPath / Texture.Name).replace_extension(".retex");
+					auto TexAssetPath = (RootPath / Texture.Name).ReplaceExtension(".retex");
 					MatAsset.MetallicRoughnessTex = Asset::MakeAssetRef(Asset::EAssetType::Texture, TexAssetPath);
 				}
 				if (Material.NormalTex >= 0 && Material.NormalTex < View.Textures.size())
 				{
 					auto& Texture = View.Textures[Material.NormalTex];
-					auto TexAssetPath = (RootPath / Texture.Name).replace_extension(".retex");
+					auto TexAssetPath = (RootPath / Texture.Name).ReplaceExtension(".retex");
 					MatAsset.NormalTex = Asset::MakeAssetRef(Asset::EAssetType::Texture, TexAssetPath);
 				}
 				if (Material.EmissiveTex >= 0 && Material.EmissiveTex < View.Textures.size())
 				{
 					auto& Texture = View.Textures[Material.EmissiveTex];
-					auto TexAssetPath = (RootPath / Texture.Name).replace_extension(".retex");
+					auto TexAssetPath = (RootPath / Texture.Name).ReplaceExtension(".retex");
 					MatAsset.EmissiveTex = Asset::MakeAssetRef(Asset::EAssetType::Texture, TexAssetPath);
 				}
 				if (Material.OcclusionTex >= 0 && Material.OcclusionTex < View.Textures.size())
 				{
 					auto& Texture = View.Textures[Material.OcclusionTex];
-					auto TexAssetPath = (RootPath / Texture.Name).replace_extension(".retex");
+					auto TexAssetPath = (RootPath / Texture.Name).ReplaceExtension(".retex");
 					MatAsset.OcclusionTex = Asset::MakeAssetRef(Asset::EAssetType::Texture, TexAssetPath);
 				}
 
-				fs::path AssetPath = RootPath / Material.Name;
-				AssetPath.replace_extension(".remat");
+				auto AssetPath = (RootPath / Material.Name).ReplaceExtension(".remat").Create();
 				std::ofstream OutStream(AssetPath);
 				cereal::JSONOutputArchive OutArchive(OutStream);
 				OutArchive(cereal::make_nvp(Material.Name, MatAsset));
@@ -1150,8 +1143,7 @@ namespace Engine::Mesh
 
 				// TODO: load skeleton
 
-				fs::path AssetPath = RootPath / Sk.Name;
-				AssetPath.replace_extension(".reskin");
+				auto AssetPath = (RootPath / Sk.Name).ReplaceExtension(".reskin").Create();
 				std::ofstream OutStream(AssetPath);
 				cereal::JSONOutputArchive OutArchive(OutStream);
 				OutArchive(cereal::make_nvp(Sk.Name, SkAsset));
@@ -1166,7 +1158,7 @@ namespace Engine::Mesh
 					// TODO: load mesh data here
 
 					auto& Sk = View.Skeletons[Mesh.SkeletonIndex];
-					auto SkAssetPath = (RootPath / Sk.Name).replace_extension(".reskin");
+					auto SkAssetPath = (RootPath / Sk.Name).ReplaceExtension(".reskin");
 					MeshAsset.Skeleton = Asset::MakeAssetRef(Asset::EAssetType::Skeleton, SkAssetPath);
 
 					for (auto& Submesh : Mesh.Submeshes)
@@ -1177,12 +1169,11 @@ namespace Engine::Mesh
 						// TODO: load submesh data here
 
 						auto& Material = View.Materials[Submesh.MaterialIndex];
-						auto MatAssetPath = (RootPath / Material.Name).replace_extension(".remat");
+						auto MatAssetPath = (RootPath / Material.Name).ReplaceExtension(".remat");
 						Sub.Material = Asset::MakeAssetRef(Asset::EAssetType::Material, MatAssetPath);
 					}
 
-					fs::path AssetPath = RootPath / Mesh.Name;
-					AssetPath.replace_extension(".reskmesh");
+					auto AssetPath = (RootPath / Mesh.Name).ReplaceExtension(".reskmesh").Create();
 					std::ofstream OutStream(AssetPath);
 					cereal::JSONOutputArchive OutArchive(OutStream);
 					OutArchive(cereal::make_nvp(Mesh.Name, MeshAsset));
@@ -1201,12 +1192,11 @@ namespace Engine::Mesh
 						// TODO: load submesh data here
 
 						auto& Material = View.Materials[Submesh.MaterialIndex];
-						auto MatAssetPath = (RootPath / Material.Name).replace_extension(".remat");
+						auto MatAssetPath = (RootPath / Material.Name).ReplaceExtension(".remat");
 						Sub.Material = Asset::MakeAssetRef(Asset::EAssetType::Material, MatAssetPath);
 					}
 
-					fs::path AssetPath = RootPath / Mesh.Name;
-					AssetPath.replace_extension(".remesh");
+					auto AssetPath = (RootPath / Mesh.Name).ReplaceExtension(".remesh").Create();
 					std::ofstream OutStream(AssetPath);
 					cereal::JSONOutputArchive OutArchive(OutStream);
 					OutArchive(cereal::make_nvp(Mesh.Name, MeshAsset));

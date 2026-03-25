@@ -8,6 +8,8 @@
 
 #include "Serealization.inl"
 
+#include "Vfs.h"
+
 #define STB_IMAGE_IMPLEMENTATION
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include <stb_image.h>
@@ -495,9 +497,8 @@ auto LoadMesh(FGameState& State, MTL::Device* Device, std::vector<Engine::Mesh::
 
 auto LoadMesh(FGameState& State, MTL::Device* Device, const char* RootPath, const char* Name, const char* Alias = nullptr) -> void
 {
-	auto LoadPath = Platform::GetResourcesPath() / RootPath / Name;
-	auto ext = LoadPath.extension();
-	if (!LoadPath.has_extension())
+	vfs::Path LoadPath(std::filesystem::path("content://") / RootPath / Name);
+	if (!LoadPath.HasExtension())
 	{
 		return;
 	}
@@ -505,9 +506,9 @@ auto LoadMesh(FGameState& State, MTL::Device* Device, const char* RootPath, cons
 	std::vector<Engine::Mesh::FMeshData> Meshes;
 	std::vector<Engine::Mesh::FSkeleton> Skeletons;
 	std::vector<Engine::Mesh::FMaterial> Materials;
-	if (LoadPath.extension() == ".gltf" || LoadPath.extension() == ".glb")
+	if (LoadPath.Extension() == ".gltf" || LoadPath.Extension() == ".glb")
 	{
-		auto Data = Engine::Mesh::gltf::LoadData(LoadPath.c_str());
+		auto Data = Engine::Mesh::gltf::LoadData(LoadPath.Resolve().c_str());
 		Meshes = Engine::Mesh::gltf::LoadMesh(Data);
 		Skeletons = Engine::Mesh::gltf::LoadSkeleton(Data);
 		Materials = Engine::Mesh::gltf::LoadMaterial(Data);
@@ -515,7 +516,7 @@ auto LoadMesh(FGameState& State, MTL::Device* Device, const char* RootPath, cons
 	}
 	else
 	{
-		auto Data = Engine::Mesh::mdl::LoadData(Device, LoadPath.c_str());
+		auto Data = Engine::Mesh::mdl::LoadData(Device, LoadPath.Resolve().c_str());
 		Meshes = Engine::Mesh::mdl::LoadMesh(Device, Data);
 		Materials = Engine::Mesh::mdl::LoadMaterial(Device, Data);
 		Engine::Mesh::mdl::FreeData(Data);
@@ -544,20 +545,20 @@ auto CreateEntity(FGameState& State, MTL::Device* Device, const std::string& Mes
 	return entt::handle(State.Registry, ent);
 }
 
-auto LoadMesh2(FGameState& State, MTL::Device* Device, const std::filesystem::path& LoadPath) -> Engine::Mesh::FMeshLoadView
+auto LoadMesh2(FGameState& State, MTL::Device* Device, const vfs::Path& LoadPath) -> Engine::Mesh::FMeshLoadView
 {
-	auto ext = LoadPath.extension();
-	if (!LoadPath.has_extension())
+	auto ext = LoadPath.Extension();
+	if (!LoadPath.HasExtension())
 	{
 		return {};
 	}
 
 	Engine::Mesh::FMeshLoadView Result;
-	if (LoadPath.extension() == ".gltf" || LoadPath.extension() == ".glb")
+	if (LoadPath.Extension() == ".gltf" || LoadPath.Extension() == ".glb")
 	{
-		auto Data = Engine::Mesh::gltf::LoadData(LoadPath.c_str());
+		auto Data = Engine::Mesh::gltf::LoadData(LoadPath.Resolve().c_str());
 		Result = Engine::Mesh::gltf::LoadMeshView(Data);
-		Result.Name = LoadPath.filename().replace_extension();
+		Result.Name = LoadPath.ReplaceExtension().Filename();
 	}
 	else
 	{
@@ -566,7 +567,7 @@ auto LoadMesh2(FGameState& State, MTL::Device* Device, const std::filesystem::pa
 	return Result;
 }
 
-auto ImportMeshes(const Engine::Mesh::FMeshLoadView& MeshView, const std::filesystem::path& RootPath)
+auto ImportMeshes(const Engine::Mesh::FMeshLoadView& MeshView, const vfs::Path& RootPath)
 {
 	switch (MeshView.Type)
 	{
@@ -696,33 +697,35 @@ auto ShowMeshView(Engine::Mesh::FMeshView& Mesh, const std::vector<Engine::Mesh:
 	ImGui::PopID();
 }
 
-auto GetFilesWithExtensions(const std::filesystem::path& path, const std::set<std::string>& exts) -> std::vector<std::filesystem::path>
+auto GetFilesWithExtensions(const vfs::Path& path, const std::set<std::string>& exts) -> std::vector<vfs::Path>
 {
-	std::vector<std::filesystem::path> files;
-	for (const auto& entry : std::filesystem::recursive_directory_iterator(path))
+	std::vector<vfs::Path> files;
+	auto root = path.Resolve();
+	auto iterator = std::filesystem::recursive_directory_iterator(root);
+	for (const auto& entry : iterator)
 	{
 		if (entry.is_regular_file())
 		{
 			std::string ext = entry.path().extension().string();
 			if (exts.find(ext) != exts.end())
 			{
-				files.push_back(entry.path());
+				files.push_back(path / std::filesystem::relative(entry.path(), root));
 			}
 		}
 	}
 	return files;
 }
 
-void ShowFileList(FGameState& State, const std::filesystem::path& path, const std::set<std::string>& exts)
+void ShowFileList(FGameState& State, const vfs::Path& path, const std::set<std::string>& exts)
 {
-	static std::filesystem::path selectedFile;
+	static vfs::Path selectedFile;
 	static Engine::Mesh::FMeshLoadView MeshData;
-	static std::string ImportRoot;
+	static vfs::Path ImportRoot;
 	auto files = GetFilesWithExtensions(path, exts);
 
 	ImGui::Begin("File Picker");
 
-	ImGui::Text("Files in %s:", path.c_str());
+	ImGui::Text("Files in %s:", path.Uri.data());
 	ImGui::Separator();
 
 	// Scrollable region for long lists
@@ -730,14 +733,12 @@ void ShowFileList(FGameState& State, const std::filesystem::path& path, const st
 
 	for (const auto& file : files)
 	{
-		std::filesystem::path rel = std::filesystem::relative(file, path);
-		if (ImGui::Selectable(rel.c_str(), selectedFile == file))
+		if (ImGui::Selectable(file.Subpath.data(), selectedFile == file))
 		{
 			selectedFile = file;
 			UnloadMesh2(MeshData);
 			MeshData = LoadMesh2(State, State.Device, selectedFile);
-			auto AssetRoot = Platform::GetResourcesPath() / "Assets" / std::filesystem::relative(selectedFile.parent_path(), Platform::GetResourcesPath());
-			ImportRoot = AssetRoot / MeshData.Name;
+			ImportRoot = selectedFile.RootPath() / "Assets" / selectedFile.ParentPath() / MeshData.Name;
 		}
 	}
 
@@ -752,7 +753,7 @@ void ShowFileList(FGameState& State, const std::filesystem::path& path, const st
 		u32 Offset = 0;
 		u32 Idx = 0;
 
-		ImGui::InputText("Import Root directory", &ImportRoot, ImGuiInputTextFlags_CharsNoBlank);
+		ImGui::InputText("Import Root directory", &ImportRoot.Uri, ImGuiInputTextFlags_CharsNoBlank);
 		ImGui::SameLine();
 		if (ImGui::Button("Import"))
 		{
@@ -842,6 +843,9 @@ RE_API auto GameInitialize(FGameMemory& Memory) -> void
 	FGameState& State = *(FGameState*)Memory.PermanentStorage;
 	// Construct game state in place
 	new (&State) FGameState();
+
+	vfs::Mount("shaders", Platform::GetResourcesPath() / "Shaders");
+	vfs::Mount("content", Platform::GetResourcesPath());
 
 	State.Width = Props.Width;
 	State.Height = Props.Height;
@@ -985,8 +989,8 @@ RE_API auto GameInitialize(FGameMemory& Memory) -> void
 			printf("Compiler create error: %s\n", desc->utf8String());
 		}
 
-		auto LoadPath = Platform::GetResourcesPath() / "Shaders" / "BuiltIn.MaterialShader.metallib";
-		NS::String* ShaderPath = NS::String::alloc()->init(LoadPath.c_str(), NS::StringEncoding::UTF8StringEncoding);
+		vfs::Path LoadPath("shaders://BuiltIn.MaterialShader.metallib");
+		NS::String* ShaderPath = NS::String::alloc()->init(LoadPath.Resolve().c_str(), NS::StringEncoding::UTF8StringEncoding);
 		auto Shader = State.Device->newLibrary(ShaderPath, &error);
 		if (!Shader)
 		{
@@ -1211,7 +1215,7 @@ RE_API auto GameUpdateAndRender(FGameMemory& Memory, f32 DeltaTime, FOffscreenBu
 	ImGui::Mac::BeginFrame(State.DrawableRenderPass.get(), Memory.Window, State.Width, State.Height);
 
 	// TEMP: Testing mesh importer via ImGui
-	ShowFileList(State, Platform::GetResourcesPath() / "meshes", { ".glb", ".obj" });
+	ShowFileList(State, vfs::Path("content", "meshes"), { ".glb", ".obj" });
 
 	// Player movement is handled by PlayerController module
 	PlayerCtrl::Update(State.PhysicsSystem, State.PlayerCapsuleID, Gamepad, DeltaTime, State.CameraYaw);

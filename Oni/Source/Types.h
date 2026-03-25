@@ -2,6 +2,8 @@
 
 #include <Platform.h>
 
+#include "Vfs.h"
+
 #define GLM_FORCE_RADIANS
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
 #define GLM_FORCE_LEFT_HANDED
@@ -318,12 +320,12 @@ namespace Engine
 		{
 			EAssetType Type = EAssetType::Invalid;
 			std::string Name{};
-			std::string Path{};
+			vfs::Path Path{};
 
 			auto serialize(cereal::JSONInputArchive& ar, const uint32_t version) -> void;
 			auto serialize(cereal::JSONOutputArchive& ar, const uint32_t version) -> void;
 		};
-		auto MakeAssetRef(EAssetType Type, const std::filesystem::path& InputPath) -> FAssetRef;
+		auto MakeAssetRef(EAssetType Type, const vfs::Path& InputPath) -> FAssetRef;
 
 		struct FDataStream
 		{
