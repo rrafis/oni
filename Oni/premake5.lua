@@ -39,6 +39,10 @@ project "Oni"
 		"../Content/**.*"
 	}
 
+	removefiles {
+		"Source/Platform/**.*",
+	}
+
 	links {
 		"Jolt",
 	}
@@ -46,6 +50,10 @@ project "Oni"
 	filter "platforms:Mac"
 		externalincludedirs {
 			"%{wks.location}/ThirdParty/metal-cpp",
+		}
+
+		files {
+			"Source/Platform/Mac/**.*",
 		}
 
 		links {

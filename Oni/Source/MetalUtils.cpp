@@ -18,6 +18,7 @@
 #include <stb_image_write.h>
 
 #include <filesystem>
+#include <fstream>
 
 namespace Engine::Mesh
 {
@@ -1079,7 +1080,137 @@ namespace Engine::Mesh
 			{
 				fs::path AssetPath = RootPath / Texture.Name;
 				AssetPath.replace_extension(".png");
-				stbi_write_png(AssetPath.c_str(), Texture.Width, Texture.Height, Texture.Channels, Texture.Payload, Texture.Width * Texture.Channels);
+
+				Asset::FTexture TexAsset;
+				TexAsset.Width = Texture.Width;
+				TexAsset.Height = Texture.Height;
+				TexAsset.Channels = Texture.Channels;
+				TexAsset.Ref = Asset::MakeAssetRef(Asset::EAssetType::Texture, AssetPath);
+				TexAsset.Pixels.Stride = Texture.Width * Texture.Channels;
+				TexAsset.Pixels.Count = Texture.Height;
+				TexAsset.Pixels.Data.resize(TexAsset.Pixels.Count * TexAsset.Pixels.Stride);
+				memcpy(TexAsset.Pixels.Data.data(), Texture.Payload, Texture.Size);
+
+				stbi_write_png(AssetPath.c_str(), TexAsset.Width, TexAsset.Height, TexAsset.Channels, TexAsset.Pixels.Data.data(), TexAsset.Pixels.Stride);
+				AssetPath.replace_extension(".retex");
+				std::ofstream OutStream(AssetPath);
+				cereal::JSONOutputArchive OutArchive(OutStream);
+				OutArchive(cereal::make_nvp(Texture.Name, TexAsset));
+			}
+
+			for (auto& Material : View.Materials)
+			{
+				Asset::FMaterial MatAsset;
+				MatAsset.BaseColorFactor = Material.BaseColorFactor;
+				MatAsset.MetallicFactor = Material.MetallicFactor;
+				MatAsset.RoughnessFactor = Material.RoughnessFactor;
+				MatAsset.EmissiveFactor = Material.EmissiveFactor;
+				MatAsset.DoubleSided = Material.DoubleSided;
+				if (Material.BaseColorTex >= 0 && Material.BaseColorTex < View.Textures.size())
+				{
+					auto& Texture = View.Textures[Material.BaseColorTex];
+					auto TexAssetPath = (RootPath / Texture.Name).replace_extension(".retex");
+					MatAsset.BaseColorTex = Asset::MakeAssetRef(Asset::EAssetType::Texture, TexAssetPath);
+				}
+				if (Material.MetallicRoughnessTex >= 0 && Material.MetallicRoughnessTex < View.Textures.size())
+				{
+					auto& Texture = View.Textures[Material.MetallicRoughnessTex];
+					auto TexAssetPath = (RootPath / Texture.Name).replace_extension(".retex");
+					MatAsset.MetallicRoughnessTex = Asset::MakeAssetRef(Asset::EAssetType::Texture, TexAssetPath);
+				}
+				if (Material.NormalTex >= 0 && Material.NormalTex < View.Textures.size())
+				{
+					auto& Texture = View.Textures[Material.NormalTex];
+					auto TexAssetPath = (RootPath / Texture.Name).replace_extension(".retex");
+					MatAsset.NormalTex = Asset::MakeAssetRef(Asset::EAssetType::Texture, TexAssetPath);
+				}
+				if (Material.EmissiveTex >= 0 && Material.EmissiveTex < View.Textures.size())
+				{
+					auto& Texture = View.Textures[Material.EmissiveTex];
+					auto TexAssetPath = (RootPath / Texture.Name).replace_extension(".retex");
+					MatAsset.EmissiveTex = Asset::MakeAssetRef(Asset::EAssetType::Texture, TexAssetPath);
+				}
+				if (Material.OcclusionTex >= 0 && Material.OcclusionTex < View.Textures.size())
+				{
+					auto& Texture = View.Textures[Material.OcclusionTex];
+					auto TexAssetPath = (RootPath / Texture.Name).replace_extension(".retex");
+					MatAsset.OcclusionTex = Asset::MakeAssetRef(Asset::EAssetType::Texture, TexAssetPath);
+				}
+
+				fs::path AssetPath = RootPath / Material.Name;
+				AssetPath.replace_extension(".remat");
+				std::ofstream OutStream(AssetPath);
+				cereal::JSONOutputArchive OutArchive(OutStream);
+				OutArchive(cereal::make_nvp(Material.Name, MatAsset));
+			}
+
+			for (auto& Sk : View.Skeletons)
+			{
+				Asset::FSkeleton SkAsset;
+
+				// TODO: load skeleton
+
+				fs::path AssetPath = RootPath / Sk.Name;
+				AssetPath.replace_extension(".reskin");
+				std::ofstream OutStream(AssetPath);
+				cereal::JSONOutputArchive OutArchive(OutStream);
+				OutArchive(cereal::make_nvp(Sk.Name, SkAsset));
+			}
+
+			for (auto& Mesh : View.Meshes)
+			{
+				if (Mesh.SkeletonIndex >= 0)
+				{
+					Asset::FSkinnedMesh MeshAsset;
+
+					// TODO: load mesh data here
+
+					auto& Sk = View.Skeletons[Mesh.SkeletonIndex];
+					auto SkAssetPath = (RootPath / Sk.Name).replace_extension(".reskin");
+					MeshAsset.Skeleton = Asset::MakeAssetRef(Asset::EAssetType::Skeleton, SkAssetPath);
+
+					for (auto& Submesh : Mesh.Submeshes)
+					{
+						auto& Sub = MeshAsset.Submeshes.emplace_back();
+						Sub.PrimitiveType = Mesh::EPrimitiveType::Triangles;
+
+						// TODO: load submesh data here
+
+						auto& Material = View.Materials[Submesh.MaterialIndex];
+						auto MatAssetPath = (RootPath / Material.Name).replace_extension(".remat");
+						Sub.Material = Asset::MakeAssetRef(Asset::EAssetType::Material, MatAssetPath);
+					}
+
+					fs::path AssetPath = RootPath / Mesh.Name;
+					AssetPath.replace_extension(".reskmesh");
+					std::ofstream OutStream(AssetPath);
+					cereal::JSONOutputArchive OutArchive(OutStream);
+					OutArchive(cereal::make_nvp(Mesh.Name, MeshAsset));
+				}
+				else
+				{
+					Asset::FStaticMesh MeshAsset;
+
+					// TODO: load mesh data here
+
+					for (auto& Submesh : Mesh.Submeshes)
+					{
+						auto& Sub = MeshAsset.Submeshes.emplace_back();
+						Sub.PrimitiveType = Mesh::EPrimitiveType::Triangles;
+
+						// TODO: load submesh data here
+
+						auto& Material = View.Materials[Submesh.MaterialIndex];
+						auto MatAssetPath = (RootPath / Material.Name).replace_extension(".remat");
+						Sub.Material = Asset::MakeAssetRef(Asset::EAssetType::Material, MatAssetPath);
+					}
+
+					fs::path AssetPath = RootPath / Mesh.Name;
+					AssetPath.replace_extension(".remesh");
+					std::ofstream OutStream(AssetPath);
+					cereal::JSONOutputArchive OutArchive(OutStream);
+					OutArchive(cereal::make_nvp(Mesh.Name, MeshAsset));
+				}
 			}
 		}
 	} // namespace gltf

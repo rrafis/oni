@@ -162,3 +162,35 @@ namespace Engine::Transform
 		return dq.real * v;
 	}
 } // namespace Engine::Transform
+
+namespace Engine::Asset
+{
+	auto MakeAssetRef(EAssetType Type, const std::filesystem::path& InputPath) -> FAssetRef
+	{
+		FAssetRef ref;
+
+		std::filesystem::path ContentRoot = Platform::GetResourcesPath();
+		std::filesystem::path FullPath = std::filesystem::weakly_canonical(InputPath.is_absolute() ? InputPath : (ContentRoot / InputPath));
+
+		auto rel = FullPath.lexically_relative(ContentRoot);
+		if (rel.empty() || rel.native()[0] == '.') // not inside ContentRoot
+		{
+			ref.Type = EAssetType::Invalid;
+			ref.Name.clear();
+			ref.Path.clear();
+			return ref;
+		}
+
+		ref.Type = Type;
+		ref.Path = "content://" + std::filesystem::relative(FullPath, ContentRoot).string();
+		ref.Name = FullPath.filename().replace_extension();
+
+		return ref;
+	}
+
+	auto FDataStream::Size() -> usize
+	{
+		return Count * Stride;
+	}
+
+} // namespace Engine::Asset

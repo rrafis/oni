@@ -300,12 +300,6 @@ struct FGameState
 	glm::vec3 LastRenderedPlayerPos; // Last smoothed render position for player (used to reduce jitter)
 };
 
-#ifdef _RE_XCODE
-constexpr auto ContentPath = "../../../Content";
-#else
-constexpr auto ContentPath = "Content";
-#endif
-
 struct FTexture
 {
 	u32 Width, Height;
@@ -385,7 +379,7 @@ auto CreateTexture(FGameState& State, MTL::Device* Device, FTexture RawTexture, 
 
 auto LoadTexture(FGameState& State, const char* RootPath, const char* Name) -> MTL::ResourceID
 {
-	auto LoadPath = std::filesystem::current_path() / ContentPath / RootPath / Name;
+	auto LoadPath = Platform::GetResourcesPath() / RootPath / Name;
 	LoadPath.replace_extension(".png");
 	auto RawTexture = LoadImage(LoadPath.c_str());
 	return CreateTexture(State, State.Device, RawTexture, Name);
@@ -393,7 +387,7 @@ auto LoadTexture(FGameState& State, const char* RootPath, const char* Name) -> M
 
 auto SaveTexture(Engine::Mesh::FTexture& Texture, const char* RootPath, const char* Name) -> void
 {
-	auto SavePath = std::filesystem::current_path() / ContentPath / "Assets" / RootPath / Name;
+	auto SavePath = Platform::GetResourcesPath() / "Assets" / RootPath / Name;
 	SavePath.replace_extension(".png");
 	std::error_code ec;
 	std::filesystem::create_directories(SavePath.parent_path(), ec);
@@ -422,7 +416,7 @@ auto CreateDummyTexture(FGameState& State, const char* Name = "Dummy") -> MTL::R
 auto LoadMesh(FGameState& State, MTL::Device* Device, std::vector<Engine::Mesh::FMeshData> Meshes, const char* Alias = nullptr,
 	std::vector<Engine::Mesh::FSkeleton> Skeletons = {}, std::vector<Engine::Mesh::FMaterial> Materials = {}, const char* RootPath = "meshes") -> void
 {
-	auto Root = std::filesystem::current_path() / ContentPath / "Assets";
+	auto Root = Platform::GetResourcesPath() / "Assets";
 	if (RootPath)
 		Root /= RootPath;
 	if (Alias)
@@ -501,7 +495,7 @@ auto LoadMesh(FGameState& State, MTL::Device* Device, std::vector<Engine::Mesh::
 
 auto LoadMesh(FGameState& State, MTL::Device* Device, const char* RootPath, const char* Name, const char* Alias = nullptr) -> void
 {
-	auto LoadPath = std::filesystem::path() / ContentPath / RootPath / Name;
+	auto LoadPath = Platform::GetResourcesPath() / RootPath / Name;
 	auto ext = LoadPath.extension();
 	if (!LoadPath.has_extension())
 	{
@@ -742,8 +736,7 @@ void ShowFileList(FGameState& State, const std::filesystem::path& path, const st
 			selectedFile = file;
 			UnloadMesh2(MeshData);
 			MeshData = LoadMesh2(State, State.Device, selectedFile);
-			auto ContentRoot = std::filesystem::current_path() / ContentPath;
-			auto AssetRoot = std::filesystem::path("Assets") / std::filesystem::relative(selectedFile.parent_path(), ContentRoot);
+			auto AssetRoot = Platform::GetResourcesPath() / "Assets" / std::filesystem::relative(selectedFile.parent_path(), Platform::GetResourcesPath());
 			ImportRoot = AssetRoot / MeshData.Name;
 		}
 	}
@@ -992,7 +985,7 @@ RE_API auto GameInitialize(FGameMemory& Memory) -> void
 			printf("Compiler create error: %s\n", desc->utf8String());
 		}
 
-		auto LoadPath = std::filesystem::path() / ContentPath / "Shaders" / "BuiltIn.MaterialShader.metallib";
+		auto LoadPath = Platform::GetResourcesPath() / "Shaders" / "BuiltIn.MaterialShader.metallib";
 		NS::String* ShaderPath = NS::String::alloc()->init(LoadPath.c_str(), NS::StringEncoding::UTF8StringEncoding);
 		auto Shader = State.Device->newLibrary(ShaderPath, &error);
 		if (!Shader)
@@ -1218,7 +1211,7 @@ RE_API auto GameUpdateAndRender(FGameMemory& Memory, f32 DeltaTime, FOffscreenBu
 	ImGui::Mac::BeginFrame(State.DrawableRenderPass.get(), Memory.Window, State.Width, State.Height);
 
 	// TEMP: Testing mesh importer via ImGui
-	ShowFileList(State, std::filesystem::current_path() / ContentPath / "meshes", { ".glb", ".obj" });
+	ShowFileList(State, Platform::GetResourcesPath() / "meshes", { ".glb", ".obj" });
 
 	// Player movement is handled by PlayerController module
 	PlayerCtrl::Update(State.PhysicsSystem, State.PlayerCapsuleID, Gamepad, DeltaTime, State.CameraYaw);

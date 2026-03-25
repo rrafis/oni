@@ -23,6 +23,8 @@
 #include <cereal/archives/json.hpp>
 #include <cereal/cereal.hpp>
 
+#include <filesystem>
+
 namespace glm
 {
 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR quat quat_identity()
@@ -300,6 +302,107 @@ namespace Engine
 		};
 	} // namespace Mesh
 
+	namespace Asset
+	{
+		enum class EAssetType : u8
+		{
+			Invalid = 0,
+			Texture,
+			Material,
+			Skeleton,
+			StaticMesh,
+			SkeletalMesh,
+		};
+
+		struct FAssetRef
+		{
+			EAssetType Type = EAssetType::Invalid;
+			std::string Name{};
+			std::string Path{};
+
+			auto serialize(cereal::JSONInputArchive& ar, const uint32_t version) -> void;
+			auto serialize(cereal::JSONOutputArchive& ar, const uint32_t version) -> void;
+		};
+		auto MakeAssetRef(EAssetType Type, const std::filesystem::path& InputPath) -> FAssetRef;
+
+		struct FDataStream
+		{
+			u64 Count;
+			u32 Stride;
+			std::vector<u8> Data; // raw data
+
+			inline auto Size() -> usize;
+
+			auto serialize(cereal::JSONInputArchive& ar, const uint32_t version) -> void;
+			auto serialize(cereal::JSONOutputArchive& ar, const uint32_t version) -> void;
+		};
+
+		struct FTexture
+		{
+			u32 Width, Height;
+			u8 Channels;
+			FAssetRef Ref;
+			FDataStream Pixels;
+
+			auto serialize(cereal::JSONInputArchive& ar, const uint32_t version) -> void;
+			auto serialize(cereal::JSONOutputArchive& ar, const uint32_t version) -> void;
+		};
+
+		struct FMaterial
+		{
+			glm::vec4 BaseColorFactor = { 1, 1, 1, 1 };
+			f32 MetallicFactor = 1.0f;
+			f32 RoughnessFactor = 1.0f;
+			glm::vec4 EmissiveFactor = { 0, 0, 0, 0 };
+			FAssetRef BaseColorTex;
+			FAssetRef MetallicRoughnessTex;
+			FAssetRef NormalTex;
+			FAssetRef EmissiveTex;
+			FAssetRef OcclusionTex;
+			bool DoubleSided = false;
+
+			auto serialize(cereal::JSONInputArchive& ar, const uint32_t version) -> void;
+			auto serialize(cereal::JSONOutputArchive& ar, const uint32_t version) -> void;
+		};
+
+		struct FSkeleton
+		{
+			Animation::FPose RestPose;
+			std::vector<glm::mat4> InvBindPose;
+			std::vector<std::string> JointNames;
+
+			auto serialize(cereal::JSONInputArchive& ar, const uint32_t version) -> void;
+			auto serialize(cereal::JSONOutputArchive& ar, const uint32_t version) -> void;
+		};
+
+		struct FStaticMesh
+		{
+			struct FSubmesh
+			{
+				Mesh::EPrimitiveType PrimitiveType;
+				FAssetRef Material;
+				FDataStream IndexStream;
+
+				auto serialize(cereal::JSONInputArchive& ar, const uint32_t version) -> void;
+				auto serialize(cereal::JSONOutputArchive& ar, const uint32_t version) -> void;
+			};
+
+			FDataStream VertexStream;
+			std::vector<FSubmesh> Submeshes;
+
+			auto serialize(cereal::JSONInputArchive& ar, const uint32_t version) -> void;
+			auto serialize(cereal::JSONOutputArchive& ar, const uint32_t version) -> void;
+		};
+
+		struct FSkinnedMesh : FStaticMesh
+		{
+			FAssetRef Skeleton;
+
+			auto serialize(cereal::JSONInputArchive& ar, const uint32_t version) -> void;
+			auto serialize(cereal::JSONOutputArchive& ar, const uint32_t version) -> void;
+		};
+	} // namespace Asset
+
 	namespace Transform
 	{
 		auto Combine(const Comp::FTransform& Lhs, const Comp::FTransform& Rhs) -> Comp::FTransform;
@@ -323,3 +426,10 @@ namespace Engine
 		auto Vector(const glm::dualquat& dq, const glm::vec3& v) -> glm::vec3;
 	} // namespace Transform
 } // namespace Engine
+
+namespace Platform
+{
+	auto GetResourcesPath() -> const std::filesystem::path&;
+	auto Sleep(u64 Ms) -> void;
+	auto GetAbsoluteTime() -> f64;
+} // namespace Platform
