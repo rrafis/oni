@@ -32,6 +32,7 @@ namespace vfs
 		auto ReplaceExtension(const std::string& NewExt = "") const -> Path;
 		auto ParentPath() const -> Path;
 		auto RootPath() const -> Path;
+		auto Canonicalize() -> void;
 
 		auto serialize(cereal::JSONInputArchive& ar, const uint32_t version) -> void;
 		auto serialize(cereal::JSONOutputArchive& ar, const uint32_t version) -> void;

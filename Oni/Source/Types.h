@@ -52,6 +52,9 @@ namespace Comp
 		glm::vec3 Position = glm::vec3();
 		glm::quat Rotation = glm::quat_identity();
 		glm::vec3 Scale = glm::vec3(1.0f);
+
+		void serialize(cereal::JSONInputArchive& ar, const uint32_t version);
+		void serialize(cereal::JSONOutputArchive& ar, const uint32_t version);
 	};
 
 	struct FSkeletonRenderData
@@ -97,6 +100,9 @@ namespace Engine
 
 			auto GetGlobaMatrix(u32 Joint) const -> glm::mat4;
 			auto GetMatrixPalette() const -> std::vector<glm::mat4>;
+
+			void serialize(cereal::JSONInputArchive& ar, const uint32_t version);
+			void serialize(cereal::JSONOutputArchive& ar, const uint32_t version);
 		};
 
 		struct FTransformTrack

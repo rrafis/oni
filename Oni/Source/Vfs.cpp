@@ -88,6 +88,16 @@ namespace vfs
 		return Path(Root, "");
 	}
 
+	auto Path::Canonicalize() -> void
+	{
+		auto pos = Uri.find("://");
+		if (pos != std::string::npos)
+		{
+			Root = Uri.substr(0, pos);
+			Subpath = Uri.substr(pos + 3);
+		}
+	}
+
 	auto Path::serialize(cereal::JSONInputArchive& ar, const uint32_t version) -> void
 	{
 		if (version <= 1)

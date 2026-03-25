@@ -416,21 +416,8 @@ auto CreateDummyTexture(FGameState& State, const char* Name = "Dummy") -> MTL::R
 }
 
 auto LoadMesh(FGameState& State, MTL::Device* Device, std::vector<Engine::Mesh::FMeshData> Meshes, const char* Alias = nullptr,
-	std::vector<Engine::Mesh::FSkeleton> Skeletons = {}, std::vector<Engine::Mesh::FMaterial> Materials = {}, const char* RootPath = "meshes") -> void
+	std::vector<Engine::Mesh::FSkeleton> Skeletons = {}, std::vector<Engine::Mesh::FMaterial> Materials = {}) -> void
 {
-	auto Root = Platform::GetResourcesPath() / "Assets";
-	if (RootPath)
-		Root /= RootPath;
-	if (Alias)
-		Root /= Alias;
-
-	std::error_code ec;
-	std::filesystem::create_directories(Root, ec);
-	if (ec)
-	{
-		std::cerr << "Failed: " << ec.message() << "\n";
-	}
-
 	std::string MeshName;
 	for (u32 Idx = 0; Idx < Meshes.size(); Idx++)
 	{
@@ -443,12 +430,6 @@ auto LoadMesh(FGameState& State, MTL::Device* Device, std::vector<Engine::Mesh::
 			State.MeshesMap[Alias] = Index;
 			MeshName = Alias;
 		}
-
-		auto SavePath = Root / MeshName;
-		SavePath.replace_extension(".remesh.json");
-		std::ofstream os(SavePath);
-		auto Ar = cereal::JSONOutputArchive(os);
-		Ar(cereal::make_nvp(MeshName, Meshes[Idx]));
 	}
 
 	for (u32 Idx = 0; Idx < Skeletons.size(); Idx++)
@@ -469,27 +450,6 @@ auto LoadMesh(FGameState& State, MTL::Device* Device, std::vector<Engine::Mesh::
 		RenderMat.EmissiveFactor = mat.EmissiveFactor;
 		RenderMat.MetallicFactor = mat.MetallicFactor;
 		RenderMat.RoughnessFactor = mat.RoughnessFactor;
-
-		if (mat.BaseColorTex.Pixels.size())
-		{
-			SaveTexture(mat.BaseColorTex, Root.c_str(), mat.BaseColorTex.Name.data());
-		}
-		if (mat.MetallicRoughnessTex.Pixels.size())
-		{
-			SaveTexture(mat.MetallicRoughnessTex, Root.c_str(), mat.MetallicRoughnessTex.Name.data());
-		}
-		if (mat.NormalTex.Pixels.size())
-		{
-			SaveTexture(mat.NormalTex, Root.c_str(), mat.NormalTex.Name.data());
-		}
-		if (mat.EmissiveTex.Pixels.size())
-		{
-			SaveTexture(mat.EmissiveTex, Root.c_str(), mat.EmissiveTex.Name.data());
-		}
-		if (mat.OcclusionTex.Pixels.size())
-		{
-			SaveTexture(mat.OcclusionTex, Root.c_str(), mat.OcclusionTex.Name.data());
-		}
 
 		State.Materials.emplace_back(RenderMat);
 	}
@@ -522,7 +482,7 @@ auto LoadMesh(FGameState& State, MTL::Device* Device, const char* RootPath, cons
 		Engine::Mesh::mdl::FreeData(Data);
 	}
 
-	LoadMesh(State, Device, Meshes, Alias, Skeletons, Materials, RootPath);
+	LoadMesh(State, Device, Meshes, Alias, Skeletons, Materials);
 }
 
 auto CreateEntity(FGameState& State, MTL::Device* Device, const std::string& MeshName) -> entt::handle
@@ -757,6 +717,7 @@ void ShowFileList(FGameState& State, const vfs::Path& path, const std::set<std::
 		ImGui::SameLine();
 		if (ImGui::Button("Import"))
 		{
+			ImportRoot.Canonicalize();
 			ImportMeshes(MeshData, ImportRoot);
 		}
 		// Textures

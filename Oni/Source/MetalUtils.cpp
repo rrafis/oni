@@ -1067,6 +1067,107 @@ namespace Engine::Mesh
 			return Result;
 		}
 
+		auto LoadStaticMesh(cgltf_data* Data, cgltf_mesh* Mesh, cgltf_skin* Skin) -> Asset::FStaticMesh
+		{
+			Asset::FStaticMesh Result;
+
+			u32 NumPrims = Mesh->primitives_count;
+			std::vector<FVertex> Vertices;
+			for (u32 PrimIdx = 0; PrimIdx < NumPrims; PrimIdx++)
+			{
+				auto primitive = &Mesh->primitives[PrimIdx];
+				u32 attribCount = primitive->attributes_count;
+				std::vector<FVertex> PrimVertices;
+				for (u32 AttribIdx = 0; AttribIdx < attribCount; AttribIdx++)
+				{
+					auto attribute = &primitive->attributes[AttribIdx];
+					MeshFromAttribute(PrimVertices, *attribute, Skin, Data->nodes, Data->nodes_count);
+				}
+				for (auto& Vert : PrimVertices)
+				{
+					Vertices.emplace_back(Vert);
+				}
+
+				if (primitive->indices)
+				{
+					std::vector<u32> Indices;
+					Indices.reserve(primitive->indices->count);
+					for (u32 IndexIdx = 0; IndexIdx < primitive->indices->count; IndexIdx++)
+					{
+						Indices.emplace_back(cgltf_accessor_read_index(primitive->indices, IndexIdx));
+					}
+
+					auto& Submesh = Result.Submeshes.emplace_back();
+					Submesh.PrimitiveType = EPrimitiveType::Triangles;
+					Submesh.IndexStream.Stride = sizeof(u32);
+					Submesh.IndexStream.Count = Indices.size();
+					Submesh.IndexStream.Data.resize(Submesh.IndexStream.Count * Submesh.IndexStream.Stride);
+					memcpy(Submesh.IndexStream.Data.data(), Indices.data(), Submesh.IndexStream.Data.size());
+				}
+			}
+
+			Result.VertexStream.Stride = offsetof(FVertex, TexCoord) + sizeof(FVertex::TexCoord);
+			Result.VertexStream.Count = Vertices.size();
+			Result.VertexStream.Data.resize(Result.VertexStream.Count * Result.VertexStream.Stride);
+			for (u32 Idx = 0; Idx < Vertices.size(); Idx++)
+			{
+				u8* DataPtr = (u8*)&Result.VertexStream.Data[Idx * Result.VertexStream.Stride];
+				memcpy(DataPtr, &Vertices[Idx], Result.VertexStream.Stride);
+			}
+
+			return Result;
+		}
+
+		auto LoadSkeleton(cgltf_data* Data, cgltf_skin& Skin) -> Asset::FSkeleton
+		{
+			u32 NodeCount = Data->nodes_count;
+
+			Asset::FSkeleton Skeleton;
+			Skeleton.RestPose.Joints.resize(NodeCount);
+			Skeleton.RestPose.Parents.resize(NodeCount, -1);
+			Skeleton.JointNames.resize(NodeCount);
+			Skeleton.InvBindPose.resize(NodeCount, glm::mat4(1.0f));
+
+			for (u32 nodeIdx = 0; nodeIdx < NodeCount; ++nodeIdx)
+			{
+				const cgltf_node* node = &Data->nodes[nodeIdx];
+				Skeleton.RestPose.Joints[nodeIdx] = Utils::GetLocalTransform(*node);
+				if (node->parent)
+				{
+					Skeleton.RestPose.Parents[nodeIdx] = Utils::GetNodeIndex(node->parent, Data->nodes, NodeCount);
+				}
+				Skeleton.JointNames[nodeIdx] = node->name ? node->name : ("node_" + std::to_string(nodeIdx));
+			}
+
+			if (Skin.inverse_bind_matrices)
+			{
+				const cgltf_accessor* accessor = Skin.inverse_bind_matrices;
+				if (accessor->type == cgltf_type_mat4 && accessor->component_type == cgltf_component_type_r_32f)
+				{
+					for (size_t i = 0; i < accessor->count && i < Skin.joints_count; ++i)
+					{
+						cgltf_float matrix[16];
+						cgltf_accessor_read_float(accessor, i, matrix, 16);
+						int nodeIdx = Utils::GetNodeIndex(Skin.joints[i], Data->nodes, NodeCount);
+						if (nodeIdx >= 0 && (u32)nodeIdx < NodeCount)
+						{
+							glm::mat4 m;
+							for (int col = 0; col < 4; ++col)
+							{
+								for (int row = 0; row < 4; ++row)
+								{
+									m[col][row] = matrix[col * 4 + row];
+								}
+							}
+							Skeleton.InvBindPose[nodeIdx] = m;
+						}
+					}
+				}
+			}
+
+			return Skeleton;
+		}
+
 		auto ImportMesh(const FMeshLoadView& View, const vfs::Path& RootPath) -> void
 		{
 			for (auto& Texture : View.Textures)
@@ -1139,9 +1240,7 @@ namespace Engine::Mesh
 
 			for (auto& Sk : View.Skeletons)
 			{
-				Asset::FSkeleton SkAsset;
-
-				// TODO: load skeleton
+				Asset::FSkeleton SkAsset(LoadSkeleton((cgltf_data*)View.Payload, *((cgltf_skin*)Sk.Payload)));
 
 				auto AssetPath = (RootPath / Sk.Name).ReplaceExtension(".reskin").Create();
 				std::ofstream OutStream(AssetPath);
@@ -1151,51 +1250,31 @@ namespace Engine::Mesh
 
 			for (auto& Mesh : View.Meshes)
 			{
+				Asset::FStaticMesh MeshAsset(LoadStaticMesh((cgltf_data*)View.Payload, (cgltf_mesh*)Mesh.MeshPayload, (cgltf_skin*)Mesh.SkinPayload));
+				for (u32 Idx = 0; Idx < MeshAsset.Submeshes.size(); Idx++)
+				{
+					auto& Submesh = Mesh.Submeshes[Idx];
+					auto& Sub = MeshAsset.Submeshes[Idx];
+					auto& Material = View.Materials[Submesh.MaterialIndex];
+					auto MatAssetPath = (RootPath / Material.Name).ReplaceExtension(".remat");
+					Sub.Material = Asset::MakeAssetRef(Asset::EAssetType::Material, MatAssetPath);
+				}
+
 				if (Mesh.SkeletonIndex >= 0)
 				{
-					Asset::FSkinnedMesh MeshAsset;
-
-					// TODO: load mesh data here
+					Asset::FSkinnedMesh SkinnedMeshAsset(MeshAsset);
 
 					auto& Sk = View.Skeletons[Mesh.SkeletonIndex];
 					auto SkAssetPath = (RootPath / Sk.Name).ReplaceExtension(".reskin");
-					MeshAsset.Skeleton = Asset::MakeAssetRef(Asset::EAssetType::Skeleton, SkAssetPath);
-
-					for (auto& Submesh : Mesh.Submeshes)
-					{
-						auto& Sub = MeshAsset.Submeshes.emplace_back();
-						Sub.PrimitiveType = Mesh::EPrimitiveType::Triangles;
-
-						// TODO: load submesh data here
-
-						auto& Material = View.Materials[Submesh.MaterialIndex];
-						auto MatAssetPath = (RootPath / Material.Name).ReplaceExtension(".remat");
-						Sub.Material = Asset::MakeAssetRef(Asset::EAssetType::Material, MatAssetPath);
-					}
+					SkinnedMeshAsset.Skeleton = Asset::MakeAssetRef(Asset::EAssetType::Skeleton, SkAssetPath);
 
 					auto AssetPath = (RootPath / Mesh.Name).ReplaceExtension(".reskmesh").Create();
 					std::ofstream OutStream(AssetPath);
 					cereal::JSONOutputArchive OutArchive(OutStream);
-					OutArchive(cereal::make_nvp(Mesh.Name, MeshAsset));
+					OutArchive(cereal::make_nvp(Mesh.Name, SkinnedMeshAsset));
 				}
 				else
 				{
-					Asset::FStaticMesh MeshAsset;
-
-					// TODO: load mesh data here
-
-					for (auto& Submesh : Mesh.Submeshes)
-					{
-						auto& Sub = MeshAsset.Submeshes.emplace_back();
-						Sub.PrimitiveType = Mesh::EPrimitiveType::Triangles;
-
-						// TODO: load submesh data here
-
-						auto& Material = View.Materials[Submesh.MaterialIndex];
-						auto MatAssetPath = (RootPath / Material.Name).ReplaceExtension(".remat");
-						Sub.Material = Asset::MakeAssetRef(Asset::EAssetType::Material, MatAssetPath);
-					}
-
 					auto AssetPath = (RootPath / Mesh.Name).ReplaceExtension(".remesh").Create();
 					std::ofstream OutStream(AssetPath);
 					cereal::JSONOutputArchive OutArchive(OutStream);

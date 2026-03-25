@@ -29,7 +29,68 @@ namespace glm
 	{
 		ar(v.x, v.y, v.z, v.w);
 	}
+
+	template <class Archive>
+	void serialize(Archive& ar, glm::vec3& v)
+	{
+		ar(v.x, v.y, v.z);
+	}
+
+	template <class Archive>
+	void serialize(Archive& ar, glm::vec2& v)
+	{
+		ar(v.x, v.y);
+	}
+
+	template <class Archive>
+	void serialize(Archive& ar, glm::quat& q)
+	{
+		ar(q.x, q.y, q.z, q.w);
+	}
+
+	template <class Archive>
+	void serialize(Archive& ar, glm::mat4& m)
+	{
+		ar(m[0], m[1], m[2], m[3]);
+	}
 } // namespace glm
+
+namespace Comp
+{
+	void FTransform::serialize(cereal::JSONInputArchive& ar, const uint32_t version)
+	{
+		if (version <= 1)
+		{
+			ar& CEREAL_NVP(Position) & CEREAL_NVP(Rotation) & CEREAL_NVP(Scale);
+		}
+	}
+
+	void FTransform::serialize(cereal::JSONOutputArchive& ar, const uint32_t version)
+	{
+		if (version <= 1)
+		{
+			ar& CEREAL_NVP(Position) & CEREAL_NVP(Rotation) & CEREAL_NVP(Scale);
+		}
+	}
+} // namespace Comp
+
+namespace Engine::Animation
+{
+	void FPose::serialize(cereal::JSONInputArchive& ar, const uint32_t version)
+	{
+		if (version <= 1)
+		{
+			ar& CEREAL_NVP(Joints) & CEREAL_NVP(Parents);
+		}
+	}
+	void FPose::serialize(cereal::JSONOutputArchive& ar, const uint32_t version)
+	{
+		if (version <= 1)
+		{
+			ar& CEREAL_NVP(Joints) & CEREAL_NVP(Parents);
+		}
+	}
+} // namespace Engine::Animation
 
 namespace Engine::Mesh
 {
@@ -126,14 +187,14 @@ namespace Engine::Asset
 	{
 		if (version <= 1)
 		{
-			ar& CEREAL_NVP(Count) & CEREAL_NVP(Stride); // & Data;
+			ar& CEREAL_NVP(Count) & CEREAL_NVP(Stride) & CEREAL_NVP(Data);
 		}
 	}
 	auto FDataStream::serialize(cereal::JSONOutputArchive& ar, const uint32_t version) -> void
 	{
 		if (version <= 1)
 		{
-			ar& CEREAL_NVP(Count) & CEREAL_NVP(Stride); // & Data;
+			ar& CEREAL_NVP(Count) & CEREAL_NVP(Stride) & CEREAL_NVP(Data);
 		}
 	}
 
@@ -169,21 +230,34 @@ namespace Engine::Asset
 		}
 	}
 
-	auto FSkeleton::serialize(cereal::JSONInputArchive& ar, const uint32_t version) -> void {}
-	auto FSkeleton::serialize(cereal::JSONOutputArchive& ar, const uint32_t version) -> void {}
+	auto FSkeleton::serialize(cereal::JSONInputArchive& ar, const uint32_t version) -> void
+	{
+		if (version <= 1)
+		{
+			ar& CEREAL_NVP(JointNames) & CEREAL_NVP(InvBindPose) & CEREAL_NVP(RestPose);
+		}
+	}
+
+	auto FSkeleton::serialize(cereal::JSONOutputArchive& ar, const uint32_t version) -> void
+	{
+		if (version <= 1)
+		{
+			ar& CEREAL_NVP(JointNames) & CEREAL_NVP(InvBindPose) & CEREAL_NVP(RestPose);
+		}
+	}
 
 	auto FStaticMesh::FSubmesh::serialize(cereal::JSONInputArchive& ar, const uint32_t version) -> void
 	{
 		if (version <= 1)
 		{
-			ar& CEREAL_NVP(PrimitiveType) & CEREAL_NVP(Material); // & CEREAL_NVP(IndexStream);
+			ar& CEREAL_NVP(PrimitiveType) & CEREAL_NVP(Material) & CEREAL_NVP(IndexStream);
 		}
 	}
 	auto FStaticMesh::FSubmesh::serialize(cereal::JSONOutputArchive& ar, const uint32_t version) -> void
 	{
 		if (version <= 1)
 		{
-			ar& CEREAL_NVP(PrimitiveType) & CEREAL_NVP(Material); // & CEREAL_NVP(IndexStream);
+			ar& CEREAL_NVP(PrimitiveType) & CEREAL_NVP(Material) & CEREAL_NVP(IndexStream);
 		}
 	}
 
@@ -191,14 +265,14 @@ namespace Engine::Asset
 	{
 		if (version <= 1)
 		{
-			ar& CEREAL_NVP(Submeshes); // & CEREAL_NVP(VertexStream);
+			ar& CEREAL_NVP(Submeshes) & CEREAL_NVP(VertexStream);
 		}
 	}
 	auto FStaticMesh::serialize(cereal::JSONOutputArchive& ar, const uint32_t version) -> void
 	{
 		if (version <= 1)
 		{
-			ar& CEREAL_NVP(Submeshes); // & CEREAL_NVP(VertexStream);
+			ar& CEREAL_NVP(Submeshes) & CEREAL_NVP(VertexStream);
 		}
 	}
 
@@ -206,14 +280,14 @@ namespace Engine::Asset
 	{
 		if (version <= 1)
 		{
-			ar& CEREAL_NVP(Skeleton) & CEREAL_NVP(Submeshes); // & CEREAL_NVP(VertexStream);
+			ar& CEREAL_NVP(Skeleton) & CEREAL_NVP(Submeshes) & CEREAL_NVP(VertexStream);
 		}
 	}
 	auto FSkinnedMesh::serialize(cereal::JSONOutputArchive& ar, const uint32_t version) -> void
 	{
 		if (version <= 1)
 		{
-			ar& CEREAL_NVP(Skeleton) & CEREAL_NVP(Submeshes); // & CEREAL_NVP(VertexStream);
+			ar& CEREAL_NVP(Skeleton) & CEREAL_NVP(Submeshes) & CEREAL_NVP(VertexStream);
 		}
 	}
 

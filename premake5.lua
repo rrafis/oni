@@ -55,6 +55,11 @@ workspace "RE"
 		}
 	filter {}
 
+	filter "toolset:clang"
+		buildoptions { "-Werror=return-type" }
+		-- buildoptions { "-Wall", "-Wextra", "-Werror=return-type" }
+	filter {}
+
 THIRD_PARTY_DIR = "%{wks.location}/ThirdParty"
 
 include "ThirdParty/imgui/imgui.premake5.lua"
