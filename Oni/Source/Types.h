@@ -339,7 +339,12 @@ namespace Engine
 			u32 Stride;
 			std::vector<u8> Data; // raw data
 
-			inline auto Size() -> usize;
+			inline auto Size() const -> usize;
+
+			inline operator void*() const
+			{
+				return (void*)Data.data();
+			}
 
 			auto serialize(cereal::JSONInputArchive& ar, const uint32_t version) -> void;
 			auto serialize(cereal::JSONOutputArchive& ar, const uint32_t version) -> void;
@@ -354,6 +359,9 @@ namespace Engine
 
 			auto serialize(cereal::JSONInputArchive& ar, const uint32_t version) -> void;
 			auto serialize(cereal::JSONOutputArchive& ar, const uint32_t version) -> void;
+
+		private:
+			auto LoadTexture() -> void;
 		};
 
 		struct FMaterial
@@ -397,13 +405,6 @@ namespace Engine
 
 			FDataStream VertexStream;
 			std::vector<FSubmesh> Submeshes;
-
-			auto serialize(cereal::JSONInputArchive& ar, const uint32_t version) -> void;
-			auto serialize(cereal::JSONOutputArchive& ar, const uint32_t version) -> void;
-		};
-
-		struct FSkinnedMesh : FStaticMesh
-		{
 			FAssetRef Skeleton;
 
 			auto serialize(cereal::JSONInputArchive& ar, const uint32_t version) -> void;

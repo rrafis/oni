@@ -67,6 +67,7 @@ namespace Engine::Mesh
 
 	namespace Metal
 	{
+		auto MapIndexType(usize Stride) -> MTL::IndexType;
 		auto ProcessMeshData(MTL::Device* Device, const Mesh::FMeshData& MeshData, std::unordered_map<std::string, u32>& MaterialMap,
 			Comp::FSkeletonRenderData* Skeleton) -> Comp::FMeshRenderer;
 		auto ProcessSkeleton(MTL::Device* Device, const Mesh::FSkeleton& Skeleton) -> Comp::FSkeletonRenderData;

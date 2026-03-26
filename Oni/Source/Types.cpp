@@ -1,5 +1,7 @@
 #include "Types.h"
 
+#include <stb_image.h>
+
 namespace Engine::Animation
 {
 	auto FPose::GetGlobaMatrix(u32 Joint) const -> glm::mat4
@@ -165,6 +167,30 @@ namespace Engine::Transform
 
 namespace Engine::Asset
 {
+	auto FTexture::LoadTexture() -> void
+	{
+		stbi_set_flip_vertically_on_load(true);
+
+		int width, height, channels;
+		unsigned char* data = stbi_load(Ref.Path.Resolve().c_str(), &width, &height, &channels, 4);
+		channels = 4;
+
+		if (data == nullptr)
+		{
+			// TODO: Handle error case
+			auto v = *data;
+		}
+
+		auto size = width * height * channels;
+
+		Pixels.Count = height;
+		Pixels.Stride = width * channels;
+		Pixels.Data.resize(Pixels.Size());
+		memcpy(Pixels, data, Pixels.Size());
+
+		stbi_image_free(data);
+	}
+
 	auto MakeAssetRef(EAssetType Type, const vfs::Path& InputPath) -> FAssetRef
 	{
 		FAssetRef Result;
@@ -177,9 +203,8 @@ namespace Engine::Asset
 		return { .Type = Type, .Name = InputPath.ReplaceExtension().Filename(), .Path = InputPath };
 	}
 
-	auto FDataStream::Size() -> usize
+	auto FDataStream::Size() const -> usize
 	{
 		return Count * Stride;
 	}
-
 } // namespace Engine::Asset

@@ -35,7 +35,7 @@ namespace Engine::Mesh
 			}
 		}
 
-		inline auto MapIndexType(usize Stride) -> MTL::IndexType
+		auto MapIndexType(usize Stride) -> MTL::IndexType
 		{
 			switch (Stride)
 			{
@@ -713,8 +713,6 @@ namespace Engine::Mesh
 
 		auto LoadImage(void* image_data, usize image_size) -> FTexture
 		{
-			stbi_set_flip_vertically_on_load(true);
-
 			int width, height, channels;
 			unsigned char* data = stbi_load_from_memory((stbi_uc*)image_data, image_size, &width, &height, &channels, 4);
 			channels = 4;
@@ -750,8 +748,6 @@ namespace Engine::Mesh
 
 		auto LoadImage(const char* path) -> FTexture
 		{
-			stbi_set_flip_vertically_on_load(true);
-
 			int width, height, channels;
 			unsigned char* data = stbi_load(path, &width, &height, &channels, 4);
 			channels = 4;
@@ -831,8 +827,6 @@ namespace Engine::Mesh
 
 		auto GetImageData(void* image_data, usize image_size) -> FTextureView
 		{
-			stbi_set_flip_vertically_on_load(true);
-
 			int width, height, channels;
 			unsigned char* data = stbi_load_from_memory((stbi_uc*)image_data, image_size, &width, &height, &channels, 4);
 
@@ -850,8 +844,6 @@ namespace Engine::Mesh
 
 		auto GetImageData(const char* path) -> FTextureView
 		{
-			stbi_set_flip_vertically_on_load(true);
-
 			int width, height, channels;
 			unsigned char* data = stbi_load(path, &width, &height, &channels, 4);
 			channels = 4;
@@ -1262,24 +1254,15 @@ namespace Engine::Mesh
 
 				if (Mesh.SkeletonIndex >= 0)
 				{
-					Asset::FSkinnedMesh SkinnedMeshAsset(MeshAsset);
-
 					auto& Sk = View.Skeletons[Mesh.SkeletonIndex];
 					auto SkAssetPath = (RootPath / Sk.Name).ReplaceExtension(".reskin");
-					SkinnedMeshAsset.Skeleton = Asset::MakeAssetRef(Asset::EAssetType::Skeleton, SkAssetPath);
+					MeshAsset.Skeleton = Asset::MakeAssetRef(Asset::EAssetType::Skeleton, SkAssetPath);
+				}
 
-					auto AssetPath = (RootPath / Mesh.Name).ReplaceExtension(".reskmesh").Create();
-					std::ofstream OutStream(AssetPath);
-					cereal::JSONOutputArchive OutArchive(OutStream);
-					OutArchive(cereal::make_nvp(Mesh.Name, SkinnedMeshAsset));
-				}
-				else
-				{
-					auto AssetPath = (RootPath / Mesh.Name).ReplaceExtension(".remesh").Create();
-					std::ofstream OutStream(AssetPath);
-					cereal::JSONOutputArchive OutArchive(OutStream);
-					OutArchive(cereal::make_nvp(Mesh.Name, MeshAsset));
-				}
+				auto AssetPath = (RootPath / Mesh.Name).ReplaceExtension(".remesh").Create();
+				std::ofstream OutStream(AssetPath);
+				cereal::JSONOutputArchive OutArchive(OutStream);
+				OutArchive(cereal::make_nvp(Mesh.Name, MeshAsset));
 			}
 		}
 	} // namespace gltf

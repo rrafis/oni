@@ -233,6 +233,24 @@ namespace ph
 
 } // namespace ph
 
+struct FAssetState
+{
+	std::unordered_map<std::string, Engine::Asset::FStaticMesh> Meshes;
+	std::unordered_map<std::string, Engine::Asset::FSkeleton> Skeletons;
+	std::unordered_map<std::string, Engine::Asset::FMaterial> Materials;
+	std::unordered_map<std::string, Engine::Asset::FTexture> Textures;
+};
+
+struct FGpuResources
+{
+	std::unordered_map<std::string, NS::SharedPtr<MTL::Texture>> Textures;
+	std::vector<Engine::Mesh::FRenderMaterial> Materials;
+	std::unordered_map<std::string, u32> MaterialMap;
+	std::unordered_map<std::string, Comp::FSkeletonRenderData> Skeletons;
+	std::vector<Comp::FMeshRenderer> Meshes;
+	std::unordered_map<std::string, u32> MeshesMap;
+};
+
 struct FGameState
 {
 	entt::registry Registry;
@@ -240,6 +258,7 @@ struct FGameState
 	NS::SharedPtr<MTL4::CommandQueue> Queue;
 	NS::SharedPtr<MTL4::CommandAllocator> Allocator;
 	NS::SharedPtr<MTL4::RenderPassDescriptor> DrawableRenderPass;
+	NS::SharedPtr<MTL4::RenderPassDescriptor> ImGuiRenderPass;
 	NS::SharedPtr<MTL::ResidencySet> ResidencySet;
 
 	NS::SharedPtr<MTL4::Compiler> ShaderCompiler;
@@ -273,6 +292,9 @@ struct FGameState
 	std::unordered_map<std::string, u32> MeshesMap;
 	std::unordered_map<std::string, u32> SkeletonMap;
 	std::unordered_map<std::string, u32> MaterialMap;
+
+	FAssetState AssetRegistry;
+	FGpuResources GpuResources;
 
 	glm::vec3 CameraPosition;
 
@@ -785,6 +807,257 @@ void ShowFileList(FGameState& State, const vfs::Path& path, const std::set<std::
 	ImGui::End();
 }
 
+namespace Asset
+{
+	auto LoadTexture(FGameState& State, const vfs::Path& Path) -> void
+	{
+		if (State.AssetRegistry.Textures.contains(Path.Uri))
+			return;
+
+		std::ifstream in(Path);
+		cereal::JSONInputArchive Ar(in);
+
+		auto& Asset = State.AssetRegistry.Textures[Path.Uri];
+		Ar(Asset);
+	}
+
+	auto LoadMaterial(FGameState& State, const vfs::Path& Path) -> void
+	{
+		if (State.AssetRegistry.Materials.contains(Path.Uri))
+			return;
+
+		std::ifstream in(Path);
+		cereal::JSONInputArchive Ar(in);
+
+		auto& Asset = State.AssetRegistry.Materials[Path.Uri];
+		Ar(Asset);
+
+		if (Asset.BaseColorTex.Path.Exists())
+			LoadTexture(State, Asset.BaseColorTex.Path);
+
+		if (Asset.MetallicRoughnessTex.Path.Exists())
+			LoadTexture(State, Asset.MetallicRoughnessTex.Path);
+
+		if (Asset.NormalTex.Path.Exists())
+			LoadTexture(State, Asset.NormalTex.Path);
+
+		if (Asset.EmissiveTex.Path.Exists())
+			LoadTexture(State, Asset.EmissiveTex.Path);
+
+		if (Asset.OcclusionTex.Path.Exists())
+			LoadTexture(State, Asset.OcclusionTex.Path);
+	}
+
+	auto LoadSkeleton(FGameState& State, const vfs::Path& Path) -> void
+	{
+		if (State.AssetRegistry.Skeletons.contains(Path.Uri))
+			return;
+
+		std::ifstream in(Path);
+		cereal::JSONInputArchive Ar(in);
+
+		auto& Asset = State.AssetRegistry.Skeletons[Path.Uri];
+		Ar(Asset);
+	}
+
+	auto LoadMesh(FGameState& State, const vfs::Path& Path) -> void
+	{
+		if (State.AssetRegistry.Meshes.contains(Path.Uri))
+			return;
+
+		std::ifstream in(Path);
+		cereal::JSONInputArchive Ar(in);
+
+		auto& Asset = State.AssetRegistry.Meshes[Path.Uri];
+		Ar(Asset);
+
+		if (Asset.Skeleton.Path.Exists())
+			LoadSkeleton(State, Asset.Skeleton.Path);
+
+		for (auto& Submesh : Asset.Submeshes)
+			if (Submesh.Material.Path.Exists())
+				LoadMaterial(State, Submesh.Material.Path);
+	}
+
+	auto PrepareGpuTexture(FGameState& State, const vfs::Path& Path, bool bGenerateMips = true) -> void
+	{
+		if (!Path.Exists())
+			return;
+
+		auto& TexAsset = State.AssetRegistry.Textures[Path.Uri];
+
+		MTL::TextureDescriptor* TextureDesc =
+			MTL::TextureDescriptor::texture2DDescriptor(MTL::PixelFormatRGBA8Unorm_sRGB, TexAsset.Width, TexAsset.Height, bGenerateMips);
+		MTL::Texture* Texture = State.Device->newTexture(TextureDesc);
+
+		// Upload texture data to VRAM
+		MTL::Region region = MTL::Region(0, 0, 0, TexAsset.Width, TexAsset.Height, 1);
+		Texture->replaceRegion(region, 0, TexAsset.Pixels, TexAsset.Pixels.Stride);
+		Texture->setLabel(NS::String::alloc()->init(TexAsset.Ref.Name.c_str(), NS::UTF8StringEncoding));
+
+		// Generate mipmaps
+		if (bGenerateMips)
+		{
+			MTL::CommandQueue* queue = State.Device->newCommandQueue();
+			MTL::CommandBuffer* cmd = queue->commandBuffer();
+			MTL::BlitCommandEncoder* encoder = cmd->blitCommandEncoder();
+			encoder->generateMipmaps(Texture);
+			encoder->endEncoding();
+			cmd->commit();
+			cmd->waitUntilCompleted();
+		}
+
+		State.GpuResources.Textures[Path.Uri] = NS::TransferPtr(Texture);
+	}
+
+	auto PrepareGpuMaterial(FGameState& State, const vfs::Path& Path) -> void
+	{
+		auto& MatAsset = State.AssetRegistry.Materials[Path.Uri];
+
+		State.GpuResources.MaterialMap[Path.Uri] = State.GpuResources.Materials.size();
+		Engine::Mesh::FRenderMaterial& RenderMat = State.GpuResources.Materials.emplace_back();
+		RenderMat.BaseColorFactor = MatAsset.BaseColorFactor;
+		RenderMat.EmissiveFactor = MatAsset.EmissiveFactor;
+		RenderMat.MetallicFactor = MatAsset.MetallicFactor;
+		RenderMat.RoughnessFactor = MatAsset.RoughnessFactor;
+		if (State.GpuResources.Textures.contains(MatAsset.BaseColorTex.Path.Uri))
+			RenderMat.BaseColorTex = State.GpuResources.Textures[MatAsset.BaseColorTex.Path.Uri]->gpuResourceID();
+		if (State.GpuResources.Textures.contains(MatAsset.MetallicRoughnessTex.Path.Uri))
+			RenderMat.MetallicRoughnessTex = State.GpuResources.Textures[MatAsset.MetallicRoughnessTex.Path.Uri]->gpuResourceID();
+		if (State.GpuResources.Textures.contains(MatAsset.NormalTex.Path.Uri))
+			RenderMat.NormalTex = State.GpuResources.Textures[MatAsset.NormalTex.Path.Uri]->gpuResourceID();
+		if (State.GpuResources.Textures.contains(MatAsset.EmissiveTex.Path.Uri))
+			RenderMat.EmissiveTex = State.GpuResources.Textures[MatAsset.EmissiveTex.Path.Uri]->gpuResourceID();
+		if (State.GpuResources.Textures.contains(MatAsset.OcclusionTex.Path.Uri))
+			RenderMat.OcclusionTex = State.GpuResources.Textures[MatAsset.OcclusionTex.Path.Uri]->gpuResourceID();
+	}
+
+	auto PrepareGpuSkeleton(FGameState& State, const vfs::Path& Path) -> void
+	{
+		auto& SkAsset = State.AssetRegistry.Skeletons[Path.Uri];
+
+		Comp::FSkeletonRenderData& Result = State.GpuResources.Skeletons[Path.Uri];
+		auto Pose = SkAsset.RestPose.GetMatrixPalette();
+		auto& Bind = SkAsset.InvBindPose;
+		Result.BindTransoformBuffer = NS::TransferPtr(State.Device->newBuffer(Bind.data(), sizeof(glm::mat4) * Bind.size(), MTL::ResourceStorageModeShared));
+		Result.PoseTransoformBuffer = NS::TransferPtr(State.Device->newBuffer(Pose.data(), sizeof(glm::mat4) * Pose.size(), MTL::ResourceStorageModeShared));
+	}
+
+	auto PrepareGpuMesh(FGameState& State, const vfs::Path& Path) -> void
+	{
+		auto& MeshAsset = State.AssetRegistry.Meshes[Path.Uri];
+
+		State.GpuResources.MeshesMap[Path.Uri] = State.GpuResources.Meshes.size();
+		Comp::FMeshRenderer& MeshRender = State.GpuResources.Meshes.emplace_back();
+		MeshRender.VertexBuffer =
+			NS::TransferPtr(State.Device->newBuffer(MeshAsset.VertexStream, MeshAsset.VertexStream.Data.size(), MTL::ResourceStorageModeShared));
+		MeshRender.VertexBuffer->setLabel(NS::String::string(std::format("VB_{}", Path.Filename()).data(), NS::UTF8StringEncoding));
+		MeshRender.UniformBuffer = NS::TransferPtr(State.Device->newBuffer(sizeof(Engine::Mesh::FMeshUniform), MTL::ResourceStorageModeShared));
+		MeshRender.UniformBuffer->setLabel(NS::String::string(std::format("UB_{}", Path.Filename()).data(), NS::UTF8StringEncoding));
+		MeshRender.MaterialIndexBuffer = NS::TransferPtr(State.Device->newBuffer(sizeof(u32) * MeshAsset.Submeshes.size(), MTL::ResourceStorageModeShared));
+		MeshRender.MaterialIndexBuffer->setLabel(NS::String::string(std::format("MIB_{}", Path.Filename()).data(), NS::UTF8StringEncoding));
+
+		NS::Error* error;
+		NS::SharedPtr<MTL::ResidencySetDescriptor> ResSetDesc = NS::TransferPtr(MTL::ResidencySetDescriptor::alloc()->init());
+
+		ResSetDesc->setInitialCapacity(1 + 1 + MeshRender.Submeshes.size()); // Vertex buffer + uniform buffer + Index buffer for each submesh
+		MeshRender.ResidencySet = NS::TransferPtr(State.Device->newResidencySet(ResSetDesc.get(), &error));
+		if (!MeshRender.ResidencySet)
+		{
+			NS::String* desc = error->localizedDescription();
+			printf("Shader compile error: %s\n", desc->utf8String());
+		}
+
+		NS::SharedPtr<MTL4::ArgumentTableDescriptor> ArgTableVertDesc = NS::TransferPtr(MTL4::ArgumentTableDescriptor::alloc()->init());
+		ArgTableVertDesc->setMaxBufferBindCount(5);
+		ArgTableVertDesc->setMaxTextureBindCount(0);
+		ArgTableVertDesc->setMaxSamplerStateBindCount(0);
+		MeshRender.ArgTableVert = NS::TransferPtr(State.Device->newArgumentTable(ArgTableVertDesc.get(), &error));
+
+		MeshRender.ArgTableVert->setAddress(MeshRender.VertexBuffer->gpuAddress(), 0);
+		MeshRender.ArgTableVert->setAddress(MeshRender.UniformBuffer->gpuAddress(), 1);
+		MeshRender.ResidencySet->addAllocation(MeshRender.VertexBuffer.get());
+		MeshRender.ResidencySet->addAllocation(MeshRender.UniformBuffer.get());
+		MeshRender.ResidencySet->addAllocation(MeshRender.MaterialIndexBuffer.get());
+		if (MeshAsset.Skeleton.Type == Engine::Asset::EAssetType::Skeleton)
+		{
+			auto& SkGpuResource = State.GpuResources.Skeletons[MeshAsset.Skeleton.Path.Uri];
+			MeshRender.ArgTableVert->setAddress(SkGpuResource.BindTransoformBuffer->gpuAddress(), 2);
+			MeshRender.ArgTableVert->setAddress(SkGpuResource.PoseTransoformBuffer->gpuAddress(), 3);
+
+			MeshRender.ResidencySet->addAllocation(SkGpuResource.BindTransoformBuffer.get());
+			MeshRender.ResidencySet->addAllocation(SkGpuResource.PoseTransoformBuffer.get());
+		}
+
+		NS::SharedPtr<MTL4::ArgumentTableDescriptor> ArgTableFragDesc = NS::TransferPtr(MTL4::ArgumentTableDescriptor::alloc()->init());
+		ArgTableFragDesc->setMaxBufferBindCount(2);
+		ArgTableFragDesc->setMaxTextureBindCount(0);
+		ArgTableFragDesc->setMaxSamplerStateBindCount(1);
+
+		u32 Idx = 0;
+		u32* MatIndex = static_cast<u32*>(MeshRender.MaterialIndexBuffer->contents());
+		for (auto& Submesh : MeshAsset.Submeshes)
+		{
+			MatIndex[Idx] = State.GpuResources.MaterialMap[Submesh.Material.Path.Uri];
+			auto& MatAsset = State.AssetRegistry.Materials[Submesh.Material.Path.Uri];
+
+			Comp::FMeshRenderer::FSubmesh Sub;
+			Sub.IndexType = Engine::Mesh::Metal::MapIndexType(Submesh.IndexStream.Stride);
+			Sub.IndexCount = Submesh.IndexStream.Count;
+			Sub.IndexBuffer =
+				NS::TransferPtr(State.Device->newBuffer(Submesh.IndexStream.Data.data(), Submesh.IndexStream.Data.size(), MTL::ResourceStorageModeShared));
+			Sub.IndexBuffer->setLabel(NS::String::string(std::format("IB_{}_{}", Path.Filename(), Idx).data(), NS::UTF8StringEncoding));
+			Sub.bDoubleSided = MatAsset.DoubleSided;
+			Sub.bWindingOrderClockWise = true;
+
+			Sub.IbSize = Sub.IndexCount * Submesh.IndexStream.Stride;
+			Sub.IbAddress = Sub.IndexBuffer->gpuAddress();
+
+			Sub.ArgTableFrag = NS::TransferPtr(State.Device->newArgumentTable(ArgTableFragDesc.get(), &error));
+			Sub.ArgTableFrag->setAddress(MeshRender.MaterialIndexBuffer->gpuAddress() + Idx * sizeof(u32), 1);
+			MeshRender.ResidencySet->addAllocation(Sub.IndexBuffer.get());
+
+			MeshRender.Submeshes.emplace_back(Sub);
+
+			Idx++;
+		}
+		MeshRender.ResidencySet->commit();
+	}
+
+	auto PrepareGpuData(FGameState& State)
+	{
+		for (auto& [uri, TexAsset] : State.AssetRegistry.Textures)
+		{
+			PrepareGpuTexture(State, uri);
+		}
+
+		for (auto& [uri, MatAsset] : State.AssetRegistry.Materials)
+		{
+			PrepareGpuMaterial(State, uri);
+		}
+
+		for (auto& [uri, SkAsset] : State.AssetRegistry.Skeletons)
+		{
+			PrepareGpuSkeleton(State, uri);
+		}
+
+		for (auto& [uri, MeshAsset] : State.AssetRegistry.Meshes)
+		{
+			PrepareGpuMesh(State, uri);
+		}
+	}
+} // namespace Asset
+
+auto CreateEntity(FGameState& State, const vfs::Path& Path) -> entt::handle
+{
+	auto ent = State.Registry.create();
+	auto& Render = State.GpuResources.Meshes[State.GpuResources.MeshesMap[Path.Uri]];
+	State.Registry.emplace<Comp::FMeshRenderer>(ent, Render);
+	State.Registry.emplace<Comp::FTransform>(ent);
+
+	return entt::handle(State.Registry, ent);
+}
+
 static FGameSurfaceDesc Props;
 RE_API auto GameGetSurfaceDesc() -> FGameSurfaceDesc*
 {
@@ -815,6 +1088,7 @@ RE_API auto GameInitialize(FGameMemory& Memory) -> void
 	State.Queue = NS::TransferPtr(State.Device->newMTL4CommandQueue());
 	State.Allocator = NS::TransferPtr(State.Device->newCommandAllocator());
 	State.DrawableRenderPass = NS::TransferPtr(MTL4::RenderPassDescriptor::alloc()->init());
+	State.ImGuiRenderPass = NS::TransferPtr(MTL4::RenderPassDescriptor::alloc()->init());
 
 	MTL::ResidencySetDescriptor* ResidencySetDesc = MTL::ResidencySetDescriptor::alloc()->init();
 	State.ResidencySet = NS::TransferPtr(State.Device->newResidencySet(ResidencySetDesc, nullptr));
@@ -862,55 +1136,53 @@ RE_API auto GameInitialize(FGameMemory& Memory) -> void
 		State.Materials.emplace_back(RenderMat);
 	}
 
-	LoadMesh(State, State.Device, "meshes/samanosuke_future", "Future_Samanosuke.obj", "Samanosuke");
-	LoadMesh(State, State.Device, "meshes/samanosuke_weapons", "Tensou_lvl_3.obj", "Tensou");
-	LoadMesh(State, State.Device, "meshes", "mannequiny-0.3.0.glb", "Mannequiny");
-	auto Box = Engine::Mesh::mdl::LoadBox("Test Box", State.Device, glm::vec3(100.0f, 1.0f, 100.f), glm::uvec3(10, 1, 10));
-	LoadMesh(State, State.Device, { Box }, Box.Name.c_str());
-	auto Capsule = Engine::Mesh::mdl::LoadCapsule("Test Capsule", State.Device, glm::vec3(0.25f, 1.75f, 0.25f), glm::uvec3(12, 4, 6));
-	LoadMesh(State, State.Device, { Capsule }, Capsule.Name.c_str());
-
+	// vfs::Path SamPath("content", "Assets/meshes/Mannequiny/Mannequiny.remesh");
+	vfs::Path SamPath("content", "Assets/meshes/DamagedHelmet/DamagedHelmet.remesh");
+	// vfs::Path SamPath("content", "Assets/meshes/FutureSamanosuke/FutureSamanosuke.remesh");
+	Asset::LoadMesh(State, SamPath);
+	Asset::PrepareGpuData(State);
 	{
-		auto Sam = CreateEntity(State, State.Device, "Samanosuke"); // samanosuke
+		auto Sam = CreateEntity(State, SamPath); // samanosuke
 		auto& Tr = Sam.get_or_emplace<Comp::FTransform>();
-		Tr.Rotation = glm::quat(glm::vec3(glm::radians(-90.0f), 0.0f, 0.0f));
-		Tr.Scale = glm::vec3(1.0f / 30.0f);
+		Tr.Rotation = glm::quat(glm::vec3(glm::radians(45.0f), glm::radians(180.0f), glm::radians(0.0f)));
+		// Tr.Rotation = glm::quat(glm::vec3(glm::radians(-90.0f), glm::radians(0.0f), glm::radians(0.0f)));
+		// Tr.Scale = glm::vec3(1.0f / 30.0f);
 		State.Player = &Tr;
 	}
 
-	{
-		auto Tensou = CreateEntity(State, State.Device, "Tensou"); // tensou
-		auto& Tr = Tensou.get_or_emplace<Comp::FTransform>();
-		Tr.Rotation = glm::quat(glm::vec3(glm::radians(-90.0f), 0.0f, 0.0f));
-		Tr.Scale = glm::vec3(1.0f / 30.0f);
-	}
+	// {
+	// 	auto Tensou = CreateEntity(State, State.Device, "Tensou"); // tensou
+	// 	auto& Tr = Tensou.get_or_emplace<Comp::FTransform>();
+	// 	Tr.Rotation = glm::quat(glm::vec3(glm::radians(-90.0f), 0.0f, 0.0f));
+	// 	Tr.Scale = glm::vec3(1.0f / 30.0f);
+	// }
 
-	{
-		auto Floor = CreateEntity(State, State.Device, "Test Box"); // floor
-		auto& Tr = Floor.get_or_emplace<Comp::FTransform>();
-		Tr.Position = glm::vec3(0.0f, -0.5f, 0.0f);
+	// {
+	// 	auto Floor = CreateEntity(State, State.Device, "Test Box"); // floor
+	// 	auto& Tr = Floor.get_or_emplace<Comp::FTransform>();
+	// 	Tr.Position = glm::vec3(0.0f, -0.5f, 0.0f);
 
-		auto& Render = Floor.get<Comp::FMeshRenderer>();
-		Render.Submeshes[0].bWireframe = true;
-	}
+	// 	auto& Render = Floor.get<Comp::FMeshRenderer>();
+	// 	Render.Submeshes[0].bWireframe = true;
+	// }
 
-	{
-		auto Capsule = CreateEntity(State, State.Device, "Test Capsule"); // capsule
-		auto& Tr = Capsule.get_or_emplace<Comp::FTransform>();
-		Tr.Position = glm::vec3(0.0f, 0.875f, 0.0f);
+	// {
+	// 	auto Capsule = CreateEntity(State, State.Device, "Test Capsule"); // capsule
+	// 	auto& Tr = Capsule.get_or_emplace<Comp::FTransform>();
+	// 	Tr.Position = glm::vec3(0.0f, 0.875f, 0.0f);
 
-		auto& Render = Capsule.get<Comp::FMeshRenderer>();
-		Render.Submeshes[0].bWireframe = true;
+	// 	auto& Render = Capsule.get<Comp::FMeshRenderer>();
+	// 	Render.Submeshes[0].bWireframe = true;
 
-		State.Capsule = &Tr;
-	}
+	// 	State.Capsule = &Tr;
+	// }
 
-	{
-		auto Mannequiny = CreateEntity(State, State.Device, "Mannequiny"); // mannequiny
-		auto& Tr = Mannequiny.get_or_emplace<Comp::FTransform>();
-		Tr.Rotation = glm::quat(glm::vec3(0.0f, glm::radians(-180.0f), 0.0f));
-		Tr.Scale = glm::vec3(1.0f / 30.0f);
-	}
+	// {
+	// 	auto Mannequiny = CreateEntity(State, State.Device, "Mannequiny"); // mannequiny
+	// 	auto& Tr = Mannequiny.get_or_emplace<Comp::FTransform>();
+	// 	Tr.Rotation = glm::quat(glm::vec3(0.0f, glm::radians(-180.0f), 0.0f));
+	// 	Tr.Scale = glm::vec3(1.0f / 30.0f);
+	// }
 
 	State.bWasJumpPressed = false;
 
@@ -936,8 +1208,8 @@ RE_API auto GameInitialize(FGameMemory& Memory) -> void
 		sdesc->release();
 	}
 
-	State.MaterialBuffer =
-		State.Device->newBuffer(State.Materials.data(), State.Materials.size() * sizeof(Engine::Mesh::FRenderMaterial), MTL::ResourceStorageModeShared);
+	State.MaterialBuffer = State.Device->newBuffer(
+		State.GpuResources.Materials.data(), State.GpuResources.Materials.size() * sizeof(Engine::Mesh::FRenderMaterial), MTL::ResourceStorageModeShared);
 	{
 		NS::Error* error;
 
@@ -1155,6 +1427,11 @@ RE_API auto GameUpdateAndRender(FGameMemory& Memory, f32 DeltaTime, FOffscreenBu
 		State.DrawableRenderPass->colorAttachments()->object(0)->setClearColor(MTL::ClearColor::Make(0.08, 0.18, 0.8, 1.0));
 		State.DrawableRenderPass->colorAttachments()->object(0)->setLoadAction(MTL::LoadActionClear);
 		State.DrawableRenderPass->colorAttachments()->object(0)->setStoreAction(MTL::StoreActionStore);
+
+		State.ImGuiRenderPass->colorAttachments()->object(0)->setTexture(Drawable->texture());
+		State.ImGuiRenderPass->colorAttachments()->object(0)->setClearColor(MTL::ClearColor::Make(0.08, 0.18, 0.8, 1.0));
+		State.ImGuiRenderPass->colorAttachments()->object(0)->setLoadAction(MTL::LoadActionLoad);
+		State.ImGuiRenderPass->colorAttachments()->object(0)->setStoreAction(MTL::StoreActionStore);
 	}
 
 	if (Drawable->texture()->width() != State.Width || Drawable->texture()->height() != State.Height)
@@ -1173,7 +1450,7 @@ RE_API auto GameUpdateAndRender(FGameMemory& Memory, f32 DeltaTime, FOffscreenBu
 		State.Projection = glm::perspectiveFov(glm::radians(State.FOV), (f32)State.Width, (f32)State.Height, 0.01f, 1000.0f);
 	}
 
-	ImGui::Mac::BeginFrame(State.DrawableRenderPass.get(), Memory.Window, State.Width, State.Height);
+	ImGui::Mac::BeginFrame(State.ImGuiRenderPass.get(), Memory.Window, State.Width, State.Height);
 
 	// TEMP: Testing mesh importer via ImGui
 	ShowFileList(State, vfs::Path("content", "meshes"), { ".glb", ".obj" });
@@ -1251,7 +1528,7 @@ RE_API auto GameUpdateAndRender(FGameMemory& Memory, f32 DeltaTime, FOffscreenBu
 		State.View = glm::lookAtLH(State.CameraPosition, LookAtPosition, glm::vec3(0, 1, 0));
 	}
 
-	State.Capsule->Position = State.Player->Position + glm::vec3(0.0f, 0.875f, 0.0f);
+	// State.Capsule->Position = State.Player->Position + glm::vec3(0.0f, 0.875f, 0.0f);
 
 	MTL4::CommitOptions* CommitOptions = MTL4::CommitOptions::alloc()->init();
 	MTL4::CommandBuffer* Cmd = State.Device->newCommandBuffer();
@@ -1260,9 +1537,9 @@ RE_API auto GameUpdateAndRender(FGameMemory& Memory, f32 DeltaTime, FOffscreenBu
 
 	{
 		State.ResidencySet->removeAllAllocations();
-		for (auto& Tex : State.Textures)
+		for (auto& [key, Tex] : State.GpuResources.Textures)
 		{
-			State.ResidencySet->addAllocation(Tex);
+			State.ResidencySet->addAllocation(Tex.get());
 		}
 		State.ResidencySet->addAllocation(State.MaterialBuffer);
 		State.ResidencySet->commit();
@@ -1321,11 +1598,14 @@ RE_API auto GameUpdateAndRender(FGameMemory& Memory, f32 DeltaTime, FOffscreenBu
 			}
 		}
 
-		{
-			Encoder->setLabel(NS::String::string("ImGui Pass", NS::UTF8StringEncoding));
-			ImGui::Mac::EndFrame(Cmd, Encoder, CommitOptions);
-		}
+		Encoder->endEncoding();
+	}
 
+	{
+		MTL4::RenderCommandEncoder* Encoder = Cmd->renderCommandEncoder(State.ImGuiRenderPass.get());
+		Encoder->setLabel(NS::String::string("ImGui Pass", NS::UTF8StringEncoding));
+		Encoder->barrierAfterQueueStages(MTL::RenderStageVertex | MTL::RenderStageFragment, MTL::RenderStageFragment, MTL4::VisibilityOptionNone);
+		ImGui::Mac::EndFrame(Cmd, Encoder, CommitOptions);
 		Encoder->endEncoding();
 	}
 
