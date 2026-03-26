@@ -3,6 +3,7 @@
 		"baseIncludePaths": [
 			"${workspaceFolder}/Engine/Source",
 			"${workspaceFolder}/ThirdParty/imgui/imgui",
+			"${workspaceFolder}/ThirdParty/meshopt/meshopt/src",
 			"${workspaceFolder}/ThirdParty/cereal/cereal/include",
 			"${workspaceFolder}/ThirdParty/cgltf/cgltf",
 			"${workspaceFolder}/ThirdParty/entt/src",

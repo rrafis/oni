@@ -16,3 +16,6 @@
 [submodule "ThirdParty/imgui/imgui"]
 	path = ThirdParty/imgui/imgui
 	url = git@github.com:rrafis/imgui.git
+[submodule "ThirdParty/meshopt/meshopt"]
+	path = ThirdParty/meshopt/meshopt
+	url = git@github.com:zeux/meshoptimizer.git
