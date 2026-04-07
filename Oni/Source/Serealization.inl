@@ -56,6 +56,27 @@ namespace glm
 	}
 } // namespace glm
 
+namespace vfs
+{
+	template <class Archive>
+	auto CEREAL_SAVE_MINIMAL_FUNCTION_NAME(Archive const&, Path const& Out) -> std::string
+	{
+		return Out.Uri;
+	}
+
+	template <class Archive>
+	auto CEREAL_LOAD_MINIMAL_FUNCTION_NAME(Archive&, Path& In, std::string const& Value) -> void
+	{
+		In.Uri = Value;
+		auto pos = In.Uri.find("://");
+		if (pos != std::string::npos)
+		{
+			In.Root = In.Uri.substr(0, pos);
+			In.Subpath = In.Uri.substr(pos + 3);
+		}
+	}
+} // namespace vfs
+
 namespace Comp
 {
 	void FTransform::serialize(cereal::JSONInputArchive& ar, const uint32_t version)

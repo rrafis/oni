@@ -26,6 +26,7 @@ project "Oni"
 	linkCereal()
 	linkImGui()
 	linkMeshopt()
+	linkAssimp()
 
 	externalincludedirs {
 		"%{wks.location}/ThirdParty/entt/src",

@@ -1,6 +1,7 @@
 #include "Vfs.h"
 
 #include <fstream>
+#include <iostream>
 
 namespace vfs
 {
@@ -98,29 +99,6 @@ namespace vfs
 		}
 	}
 
-	auto Path::serialize(cereal::JSONInputArchive& ar, const uint32_t version) -> void
-	{
-		if (version <= 1)
-		{
-			ar& CEREAL_NVP(Uri);
-
-			auto pos = Uri.find("://");
-			if (pos != std::string::npos)
-			{
-				Root = Uri.substr(0, pos);
-				Subpath = Uri.substr(pos + 3);
-			}
-		}
-	}
-
-	auto Path::serialize(cereal::JSONOutputArchive& ar, const uint32_t version) -> void
-	{
-		if (version <= 1)
-		{
-			ar& CEREAL_NVP(Uri);
-		}
-	}
-
 	Path& Path::operator/=(const char* rhs)
 	{
 		fs::path tmp(Subpath);
@@ -208,14 +186,25 @@ namespace vfs
 			return {};
 		}
 
+		fs::path firstCandidate;
+		bool hasFirst = false;
+
 		for (const auto& realRoot : it->second)
 		{
 			fs::path candidate = realRoot / fs::path(Path.Subpath);
+			if (!hasFirst)
+			{
+				firstCandidate = candidate;
+				hasFirst = true;
+			}
+
 			if (fs::exists(candidate))
 				return candidate;
 		}
 
-		return {};
+		// If the target doesn't exist yet, still return the first resolved path
+		// so writers can create it and readers can later check exists explicitly.
+		return hasFirst ? firstCandidate : fs::path();
 	}
 
 	auto ResolveAll(const vfs::Path& Path) -> std::vector<fs::path>

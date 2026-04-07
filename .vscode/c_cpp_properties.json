@@ -2,6 +2,7 @@
 	"env": {
 		"baseIncludePaths": [
 			"${workspaceFolder}/Engine/Source",
+			"${workspaceFolder}/ThirdParty/assimp/include",
 			"${workspaceFolder}/ThirdParty/imgui/imgui",
 			"${workspaceFolder}/ThirdParty/meshopt/meshopt/src",
 			"${workspaceFolder}/ThirdParty/cereal/cereal/include",

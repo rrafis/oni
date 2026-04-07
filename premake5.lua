@@ -62,6 +62,35 @@ workspace "RE"
 
 THIRD_PARTY_DIR = "%{wks.location}/ThirdParty"
 
+function linkDynamic(location, libs, extraLibs)
+	libdirs {
+		"%{cfg.targetdir}"
+	}
+
+	for _, lib in ipairs(libs) do
+		links {
+			lib,
+		}
+
+		filter "platforms:Mac"
+			prebuildcommands {
+				"{COPY} " .. location .. "/Binaries/%{cfg.platform}/%{cfg.buildcfg}/lib" .. lib .. ".dylib %{cfg.targetdir}",
+			}
+		filter {}
+	end
+
+	if extraLibs then
+		for _, lib in ipairs(extraLibs) do
+			filter "platforms:Mac"
+				prebuildcommands {
+					"{COPY} " .. location .. "/Binaries/%{cfg.platform}/%{cfg.buildcfg}/lib" .. lib .. ".dylib %{cfg.targetdir}",
+				}
+			filter {}
+		end
+	end
+end
+
+include "ThirdParty/assimp/assimp.premake5.lua"
 include "ThirdParty/imgui/imgui.premake5.lua"
 include "ThirdParty/meshopt/meshopt.premake5.lua"
 include "ThirdParty/cereal/cereal.premake5.lua"

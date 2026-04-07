@@ -3,10 +3,6 @@
 #include <Platform.h>
 
 #include <filesystem>
-
-#include <cereal/archives/json.hpp>
-#include <cereal/cereal.hpp>
-
 namespace vfs
 {
 	namespace fs = std::filesystem;
@@ -33,9 +29,6 @@ namespace vfs
 		auto ParentPath() const -> Path;
 		auto RootPath() const -> Path;
 		auto Canonicalize() -> void;
-
-		auto serialize(cereal::JSONInputArchive& ar, const uint32_t version) -> void;
-		auto serialize(cereal::JSONOutputArchive& ar, const uint32_t version) -> void;
 
 		Path& operator/=(const char* rhs);
 		Path& operator/=(const std::string& rhs);

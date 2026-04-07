@@ -1,3 +1,5 @@
+#pragma once
+
 #include "Platform.h"
 
 #define IMGUI_DEFINE_MATH_OPERATORS
